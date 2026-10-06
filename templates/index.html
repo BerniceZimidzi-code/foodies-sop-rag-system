@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Foodies SOP Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Foodies SOP Assistant</h1>
+        <div class="badge">Approved SOPs Only</div>
+      </header>
+
+      <div class="app-shell">
+        <aside class="panel sidebar">
+          <h2>Ask an approved SOP</h2>
+          <label for="department">Department</label>
+          <select id="department">
+            <option value="">All departments</option>
+          </select>
+
+          <label for="question">Question</label>
+          <textarea id="question" placeholder="Example: What should a waiter do when a guest is unhappy with a delayed order?"></textarea>
+
+          <button id="submit" type="button">Search approved SOPs</button>
+        </aside>
+
+        <main class="panel">
+          <div class="answer-box">
+            <h3>Answer</h3>
+            <div id="answer" class="empty-state">No answer yet. Ask a question to retrieve policy from the approved SOP repository.</div>
+          </div>
+
+          <div class="citation-list" id="citations"></div>
+        </main>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
