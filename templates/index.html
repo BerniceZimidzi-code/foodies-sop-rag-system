@@ -3,41 +3,252 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Foodies SOP Assistant</title>
+    <meta name="theme-color" content="#f6c928" />
+    <meta name="description" content="Foodies internal assistant for approved standard operating procedures." />
+    <title>Foodies | SOP Assistant</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Foodies SOP Assistant</h1>
-        <div class="badge">Approved SOPs Only</div>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Foodies SOP Assistant home">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <span class="brand-copy">
+            <span class="brand-name">foodies<span class="brand-period">.</span></span>
+            <span class="brand-caption">TEAM KNOWLEDGE</span>
+          </span>
+        </a>
+        <div class="header-actions">
+          <span class="approval-pill"><span class="status-dot"></span> Approved SOPs only</span>
+          <button id="logout" class="button button-quiet hidden" type="button">
+            <span aria-hidden="true">↗</span> Sign out
+          </button>
+        </div>
       </header>
 
-      <div class="app-shell">
-        <aside class="panel sidebar">
-          <h2>Ask an approved SOP</h2>
-          <label for="department">Department</label>
-          <select id="department">
-            <option value="">All departments</option>
-          </select>
-
-          <label for="question">Question</label>
-          <textarea id="question" placeholder="Example: What should a waiter do when a guest is unhappy with a delayed order?"></textarea>
-
-          <button id="submit" type="button">Search approved SOPs</button>
-        </aside>
-
-        <main class="panel">
-          <div class="answer-box">
-            <h3>Answer</h3>
-            <div id="answer" class="empty-state">No answer yet. Ask a question to retrieve policy from the approved SOP repository.</div>
+      <main id="main-content">
+        <section id="login-panel" class="login-layout">
+          <div class="login-story">
+            <div class="story-kicker"><span class="sparkle" aria-hidden="true">✳</span> YOUR SHIFT, SIMPLIFIED</div>
+            <h1>Good service<br />starts with <span>good answers.</span></h1>
+            <p class="story-copy">Find the right Foodies procedure, right when you need it. Every answer comes from an approved SOP and shows you its source.</p>
+            <div class="story-points">
+              <div class="story-point"><span class="point-icon" aria-hidden="true">✓</span><span>Trusted, approved guidance</span></div>
+              <div class="story-point"><span class="point-icon" aria-hidden="true">⌕</span><span>Made for your department</span></div>
+              <div class="story-point"><span class="point-icon" aria-hidden="true">↗</span><span>Sources you can check</span></div>
+            </div>
+            <div class="story-stamp" aria-hidden="true"><span>PEOPLE</span><span>·</span><span>FOOD</span><span>·</span><span>GOOD TIMES</span></div>
           </div>
 
-          <div class="citation-list" id="citations"></div>
-        </main>
-      </div>
-    </div>
+          <div class="login-card">
+            <div class="login-card-heading">
+              <span class="card-icon" aria-hidden="true">→</span>
+              <p class="eyebrow">WELCOME TO FOODIES</p>
+              <h2>Sign in to get started</h2>
+              <p class="muted">Use your team account to access your department's playbook.</p>
+            </div>
+            <form id="login-form">
+              <label for="email">Work email</label>
+              <input id="email" type="email" autocomplete="username" placeholder="you@foodies.com" required />
+              <label for="password">Password</label>
+              <input id="password" type="password" autocomplete="current-password" placeholder="Enter your password" required />
+              <button id="login-submit" class="button button-primary button-wide" type="submit">
+                <span>Sign in securely</span><span aria-hidden="true">→</span>
+              </button>
+            </form>
+            <p id="login-error" class="form-message error hidden" role="alert"></p>
+            <div class="login-footnote"><span aria-hidden="true">▣</span> Secure access for Foodies team members</div>
+          </div>
+        </section>
 
-    <script src="/static/app.js"></script>
+        <section id="password-change-panel" class="password-change-panel hidden">
+          <div class="password-change-card">
+            <span class="card-icon" aria-hidden="true">⌑</span>
+            <p class="eyebrow">ACCOUNT SECURITY</p>
+            <h1>Set your password</h1>
+            <p class="muted">An administrator gave you a temporary password. Choose a new one before continuing.</p>
+            <form id="password-change-form">
+              <label for="new-user-password">New password <span class="label-note">12+ characters</span></label>
+              <input id="new-user-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+              <label for="confirm-user-password">Confirm new password</label>
+              <input id="confirm-user-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+              <button id="password-change-submit" class="button button-primary button-wide" type="submit">Save password <span aria-hidden="true">→</span></button>
+            </form>
+            <p id="password-change-error" class="form-message" role="alert"></p>
+          </div>
+        </section>
+
+        <section id="activation-panel" class="password-change-panel hidden">
+          <div class="password-change-card">
+            <span class="card-icon" aria-hidden="true">✉</span>
+            <p class="eyebrow">ACCOUNT ACTIVATION</p>
+            <h1>Activate your account</h1>
+            <p class="muted">Enter the temporary password from your invitation email, then choose a new password.</p>
+            <form id="activation-form">
+              <label for="activation-temporary-password">Temporary password from email</label>
+              <input id="activation-temporary-password" type="password" minlength="12" maxlength="256" autocomplete="current-password" required />
+              <label for="activation-new-password">New password <span class="label-note">12+ characters</span></label>
+              <input id="activation-new-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+              <label for="activation-confirm-password">Confirm new password</label>
+              <input id="activation-confirm-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
+              <button id="activation-submit" class="button button-primary button-wide" type="submit">Activate and set password <span aria-hidden="true">→</span></button>
+            </form>
+            <p id="activation-message" class="form-message" role="status"></p>
+            <button id="activation-continue" class="button button-quiet button-wide hidden" type="button">Continue to sign in</button>
+          </div>
+        </section>
+
+        <section id="assistant" class="assistant hidden">
+          <div class="welcome-row">
+            <div>
+              <p class="eyebrow">YOUR FOODIES PLAYBOOK</p>
+              <h1>What can we help with?</h1>
+              <p class="welcome-copy">Ask a question and we'll find the approved guidance for your team.</p>
+            </div>
+            <div class="profile-chip">
+              <span id="avatar" class="avatar" aria-hidden="true">F</span>
+              <span><strong id="profile-name"></strong><small id="profile-detail"></small></span>
+            </div>
+          </div>
+
+          <div class="assistant-grid">
+            <aside class="search-panel">
+              <div class="panel-heading">
+                <span class="panel-step">01</span>
+                <div><h2>Ask your question</h2><p>Search your approved SOPs</p></div>
+              </div>
+              <label for="department">Department</label>
+              <select id="department" aria-describedby="department-help">
+                <option value="">My department</option>
+              </select>
+              <span id="department-help" class="field-hint">Your access is limited to authorized departments.</span>
+              <form id="query-form">
+                <label for="question">Your question</label>
+                <textarea id="question" maxlength="2000" placeholder="e.g. How often should I check cold room temperatures?" required></textarea>
+                <div class="input-footer"><span>Be specific for the best result</span><span id="character-count">0 / 2000</span></div>
+                <button id="submit" class="button button-primary button-wide" type="submit">
+                  <span>Find an answer</span><span aria-hidden="true">→</span>
+                </button>
+              </form>
+              <div class="suggestions">
+                <p class="eyebrow">TRY ASKING</p>
+                <button class="suggestion" type="button" data-question="How often should kitchen staff check cold room temperatures?">Cold room temperature checks <span aria-hidden="true">↗</span></button>
+                <button class="suggestion" type="button" data-question="What should I do when a guest has a complaint?">Handling a guest complaint <span aria-hidden="true">↗</span></button>
+                <button class="suggestion" type="button" data-question="What should a cashier do when a bill is disputed?">Resolving a bill dispute <span aria-hidden="true">↗</span></button>
+              </div>
+            </aside>
+
+            <section class="results-panel" aria-label="Answer and sources">
+              <div class="results-topline">
+                <div><span class="panel-step">02</span><span class="eyebrow">YOUR ANSWER</span></div>
+                <span id="answer-status" class="result-status"><span class="status-dot"></span> Grounded in approved SOPs</span>
+              </div>
+              <div id="answer-state" class="answer-state">
+                <div class="empty-illustration" aria-hidden="true"><span class="illustration-sun"></span><span class="illustration-card"></span><span class="illustration-spark">✳</span></div>
+                <h2>Your answer will show up here.</h2>
+                <p>Ask a question to get clear, practical guidance with its original SOP source attached.</p>
+              </div>
+              <article id="answer-card" class="answer-card hidden" aria-live="polite">
+                <div class="answer-label"><span class="answer-check" aria-hidden="true">✓</span> APPROVED GUIDANCE</div>
+                <p id="answer" class="answer-text"></p>
+              </article>
+              <div class="sources-heading"><div><p class="eyebrow">SHOW YOUR WORK</p><h2>Sources <span id="source-count" class="source-count"></span></h2></div></div>
+              <div id="citations" class="citation-list" aria-live="polite">
+                <p id="sources-empty" class="sources-empty">Sources will appear here with every answer.</p>
+              </div>
+              <div class="trust-note"><span aria-hidden="true">✳</span><span>Only current, approved procedures are used. No match? We'll say so—never guess.</span></div>
+            </section>
+          </div>
+
+          <section class="library-panel" aria-labelledby="library-title">
+            <div class="library-heading">
+              <div>
+                <p class="eyebrow">APPROVED KNOWLEDGE</p>
+                <h2 id="library-title">Your SOP library</h2>
+                <p class="welcome-copy">Current, effective procedures available to your account.</p>
+              </div>
+              <button id="refresh-library" class="button button-quiet" type="button">Refresh</button>
+            </div>
+            <label class="visually-hidden" for="library-search">Search approved SOPs</label>
+            <input id="library-search" class="library-search" type="search" placeholder="Search by SOP ID, title, or department" />
+            <div id="library-list" class="library-list" aria-live="polite">
+              <p class="sources-empty">Sign in to load your approved procedures.</p>
+            </div>
+          </section>
+
+          <section id="admin-panel" class="admin-panel hidden">
+            <div class="admin-title">
+              <div><p class="eyebrow">TEAM CONTROLS</p><h2>Administration</h2></div>
+              <span class="admin-badge">ADMIN</span>
+            </div>
+            <p id="email-setup-warning" class="form-message email-setup-warning hidden" role="status"></p>
+            <div class="admin-grid">
+              <form id="sop-upload-form" class="admin-card">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">↑</span><div><h3>Upload a procedure</h3><p>Files are extracted and queued for administrator review before they can be searched.</p></div></div>
+                <div class="sop-form-grid">
+                  <div><label for="sop-file">SOP document</label><input id="sop-file" name="file" type="file" accept=".md,.pdf,.docx" required /><span class="field-hint">Markdown, text PDF, or Word · max 15 MB</span></div>
+                  <div><label for="sop-id">SOP ID</label><input id="sop-id" name="sop_id" required maxlength="120" placeholder="e.g. SOP-KIT-001" /></div>
+                  <div><label for="sop-title">Title</label><input id="sop-title" name="title" required maxlength="200" placeholder="Procedure title" /></div>
+                  <div><label for="sop-department">Department</label><input id="sop-department" name="department" required maxlength="100" placeholder="e.g. Kitchen" /></div>
+                  <div><label for="sop-owner">Owner</label><input id="sop-owner" name="owner" required maxlength="150" placeholder="Role or name" /></div>
+                  <div><label for="sop-version">Version</label><input id="sop-version" name="version" required maxlength="40" placeholder="1.0" /></div>
+                  <div><label for="sop-effective-date">Effective date</label><input id="sop-effective-date" name="effective_date" type="date" required /></div>
+                  <div><label for="sop-review-cycle">Review cycle <span class="label-note">days · optional</span></label><input id="sop-review-cycle" name="review_cycle_days" type="number" min="1" max="3650" placeholder="365" /></div>
+                </div>
+                <button id="sop-upload-submit" class="button button-primary" type="submit">Upload for review <span aria-hidden="true">→</span></button>
+                <p id="sop-upload-message" class="form-message" role="status"></p>
+              </form>
+              <section class="admin-card sop-review-card" aria-labelledby="sop-review-title">
+                <div class="audit-heading">
+                  <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">▤</span><div><h3 id="sop-review-title">SOP review queue</h3><p>Approve or reject uploaded versions.</p></div></div>
+                  <button id="refresh-sops" class="button button-quiet" type="button">Refresh</button>
+                </div>
+                <div id="sop-list" class="sop-list"><p class="sources-empty">Loading SOP versions…</p></div>
+              </section>
+              <form id="create-user-form" class="admin-card">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">＋</span><div><h3>Add one team member</h3><p>We’ll email a one-time activation link and temporary password.</p></div></div>
+                <label for="new-name">Full name</label>
+                <input id="new-name" required maxlength="120" placeholder="Team member name" />
+                <label for="new-email">Work email</label>
+                <input id="new-email" type="email" required placeholder="name@foodies.com" />
+                <label for="new-department">Department</label>
+                <input id="new-department" required maxlength="100" placeholder="e.g. Kitchen" />
+                <label for="new-role">Role</label>
+                <select id="new-role"><option value="staff">Staff</option><option value="manager">Manager</option><option value="admin">Administrator</option></select>
+                <button class="button button-primary button-wide" type="submit">Create and email invitation <span aria-hidden="true">→</span></button>
+                <p id="admin-message" class="form-message" role="status"></p>
+              </form>
+              <section class="admin-card" aria-labelledby="bulk-users-title">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">⇧</span><div><h3 id="bulk-users-title">Add users from Excel</h3><p>Upload, review row-by-row, then create every valid account.</p></div></div>
+                <p class="field-hint">Use an .xlsx file with columns: name, email, department, role. Maximum 500 users.</p>
+                <form id="bulk-users-form">
+                  <label for="bulk-users-file">Excel spreadsheet</label>
+                  <input id="bulk-users-file" type="file" accept=".xlsx" required />
+                  <button id="bulk-preview-submit" class="button button-quiet button-wide" type="submit">Review spreadsheet</button>
+                </form>
+                <p id="bulk-users-message" class="form-message" role="status"></p>
+                <div id="bulk-users-preview" class="bulk-users-preview hidden"></div>
+                <button id="bulk-create-valid" class="button button-primary button-wide hidden" type="button" disabled>Create valid accounts and email invitations</button>
+              </section>
+              <section class="admin-card" aria-labelledby="users-title">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">♙</span><div><h3 id="users-title">Team accounts</h3><p>Manage access to the SOP assistant.</p></div></div>
+                <div id="users-list" class="users-list"><p class="sources-empty">Loading team accounts…</p></div>
+              </section>
+              <section class="admin-card audit-card" aria-labelledby="audit-title">
+                <div class="audit-heading">
+                  <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">≡</span><div><h3 id="audit-title">Recent activity</h3><p>Latest audited SOP questions.</p></div></div>
+                  <button id="refresh-audit" class="button button-quiet" type="button">Refresh</button>
+                </div>
+                <div id="audit-list" class="audit-list"><p class="sources-empty">Loading audit activity…</p></div>
+              </section>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="page-footer"><span>FOODIES <span class="brand-period">·</span> TEAM KNOWLEDGE</span><span>Good food. Great teams. The right answer.</span></footer>
+    </div>
+    <script src="/static/app.js" defer></script>
   </body>
 </html>
