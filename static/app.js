@@ -2,6 +2,12 @@ const loginPanel = document.getElementById('login-panel');
 const loginForm = document.getElementById('login-form');
 const loginError = document.getElementById('login-error');
 const loginButton = document.getElementById('login-submit');
+const forgotPasswordLink = document.getElementById('forgot-password-link');
+const forgotPasswordPanel = document.getElementById('forgot-password-panel');
+const forgotPasswordForm = document.getElementById('forgot-password-form');
+const forgotPasswordSubmit = document.getElementById('forgot-password-submit');
+const forgotPasswordMessage = document.getElementById('forgot-password-message');
+const forgotPasswordBack = document.getElementById('forgot-password-back');
 const passwordChangePanel = document.getElementById('password-change-panel');
 const passwordChangeForm = document.getElementById('password-change-form');
 const passwordChangeError = document.getElementById('password-change-error');
@@ -54,6 +60,7 @@ let currentUser = null;
 let approvedSops = [];
 let bulkPreviewUsers = [];
 let activationToken = new URLSearchParams(window.location.hash.slice(1)).get('token');
+let credentialLinkMode = window.location.pathname === '/reset-password' ? 'reset' : 'activate';
 
 async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -96,6 +103,7 @@ function signOut() {
   logoutButton.classList.add('hidden');
   passwordChangePanel.classList.add('hidden');
   activationPanel.classList.add('hidden');
+  forgotPasswordPanel.classList.add('hidden');
   passwordChangeForm.reset();
   activationForm.reset();
   loginPanel.classList.remove('hidden');
@@ -182,16 +190,32 @@ function showPasswordChange(user) {
 
 function showActivationPage() {
   loginPanel.classList.add('hidden');
+  forgotPasswordPanel.classList.add('hidden');
   activationPanel.classList.remove('hidden');
+  const isReset = credentialLinkMode === 'reset';
+  document.getElementById('credential-eyebrow').textContent =
+    isReset ? 'ACCOUNT RECOVERY' : 'ACCOUNT ACTIVATION';
+  document.getElementById('credential-title').textContent =
+    isReset ? 'Choose a new password' : 'Activate your account';
+  document.getElementById('credential-description').textContent = isReset
+    ? 'Choose a new password to regain access to your account.'
+    : 'Choose a password to finish activating your account.';
+  activationSubmit.firstChild.textContent = isReset ? 'Reset password ' : 'Activate account ';
   if (!activationToken) {
-    activationMessage.textContent = 'This activation link is invalid or incomplete. Ask an administrator to resend the invitation.';
+    activationMessage.textContent = isReset
+      ? 'This password reset link is invalid or incomplete. Request a new reset link from the sign-in page.'
+      : 'This activation link is invalid or incomplete. Ask an administrator to resend the invitation.';
     activationMessage.classList.add('error');
     activationSubmit.disabled = true;
+    activationContinue.textContent = 'Back to sign in';
+    activationContinue.classList.remove('hidden');
     return;
   }
-  activationMessage.textContent = 'This secure activation link can be used once and expires after 24 hours.';
+  activationMessage.textContent = isReset
+    ? 'This secure reset link can be used once and expires after 30 minutes.'
+    : 'This secure activation link can be used once and expires after 24 hours.';
   history.replaceState(null, '', window.location.pathname);
-  document.getElementById('activation-temporary-password').focus();
+  document.getElementById('activation-new-password').focus();
 }
 
 function showAnswerError(error) {
@@ -201,6 +225,43 @@ function showAnswerError(error) {
   answerElement.classList.add('error');
   setAnswerStatus('Something went wrong', 'error');
 }
+
+forgotPasswordLink.addEventListener('click', () => {
+  loginPanel.classList.add('hidden');
+  forgotPasswordPanel.classList.remove('hidden');
+  forgotPasswordMessage.textContent = '';
+  forgotPasswordMessage.classList.remove('error');
+  document.getElementById('forgot-password-email').value =
+    document.getElementById('email').value;
+  document.getElementById('forgot-password-email').focus();
+});
+
+forgotPasswordBack.addEventListener('click', () => {
+  forgotPasswordPanel.classList.add('hidden');
+  loginPanel.classList.remove('hidden');
+  document.getElementById('email').focus();
+});
+
+forgotPasswordForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  forgotPasswordSubmit.disabled = true;
+  forgotPasswordMessage.textContent = '';
+  forgotPasswordMessage.classList.remove('error');
+  try {
+    const result = await apiFetch('/api/auth/password-reset', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: document.getElementById('forgot-password-email').value,
+      }),
+    });
+    forgotPasswordMessage.textContent = result.message;
+  } catch (error) {
+    forgotPasswordMessage.textContent = error.message;
+    forgotPasswordMessage.classList.add('error');
+  } finally {
+    forgotPasswordSubmit.disabled = false;
+  }
+});
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -264,7 +325,6 @@ activationForm.addEventListener('submit', async (event) => {
   activationSubmit.disabled = true;
   activationMessage.textContent = '';
   activationMessage.classList.remove('error');
-  const temporaryPassword = document.getElementById('activation-temporary-password').value;
   const newPassword = document.getElementById('activation-new-password').value;
   const confirmPassword = document.getElementById('activation-confirm-password').value;
   if (newPassword !== confirmPassword) {
@@ -273,36 +333,39 @@ activationForm.addEventListener('submit', async (event) => {
     activationSubmit.disabled = false;
     return;
   }
-  if (newPassword === temporaryPassword) {
-    activationMessage.textContent = 'Choose a new password that differs from the temporary password.';
-    activationMessage.classList.add('error');
-    activationSubmit.disabled = false;
-    return;
-  }
   try {
-    const result = await apiFetch('/api/auth/activate', {
+    const isReset = credentialLinkMode === 'reset';
+    const result = await apiFetch(
+      isReset ? '/api/auth/password-reset/confirm' : '/api/auth/activate',
+      {
       method: 'POST',
       body: JSON.stringify({
         token: activationToken,
-        temporary_password: temporaryPassword,
         new_password: newPassword,
         confirm_password: confirmPassword,
       }),
-    });
+      },
+    );
     activationToken = null;
     activationForm.reset();
     activationSubmit.classList.add('hidden');
-    activationMessage.textContent = `Account activated for ${result.email}. You can now sign in with your new password.`;
+    activationMessage.textContent = isReset
+      ? `Password reset for ${result.email}. You can now sign in with your new password.`
+      : `Account activated for ${result.email}. You can now sign in with your new password.`;
+    activationContinue.textContent = 'Continue to sign in';
     activationContinue.classList.remove('hidden');
   } catch (error) {
     activationMessage.textContent = error.message;
     activationMessage.classList.add('error');
+    activationContinue.textContent = 'Back to sign in';
+    activationContinue.classList.remove('hidden');
   } finally {
     activationSubmit.disabled = false;
   }
 });
 
 activationContinue.addEventListener('click', () => {
+  history.replaceState(null, '', '/');
   activationPanel.classList.add('hidden');
   loginPanel.classList.remove('hidden');
   document.getElementById('email').value = '';
@@ -627,10 +690,9 @@ async function loadUsers() {
             const reset = document.createElement('button');
             reset.className = 'user-toggle';
             reset.type = 'button';
-            reset.textContent = 'Reset password';
-            reset.setAttribute('aria-label', `Reset password for ${user.name}`);
-            reset.setAttribute('aria-expanded', 'false');
-            reset.addEventListener('click', () => openPasswordResetForm(user, row, reset));
+            reset.textContent = 'Send reset link';
+            reset.setAttribute('aria-label', `Email a password reset link to ${user.name}`);
+            reset.addEventListener('click', () => requestAdminPasswordReset(user, reset));
             actions.append(reset);
           }
           const toggle = document.createElement('button');
@@ -697,119 +759,19 @@ async function deleteUserAccount(user, button) {
   }
 }
 
-function openPasswordResetForm(user, row, resetButton) {
-  const existingForm = document.querySelector('.user-reset-form');
-  if (existingForm) {
-    const existingButton = existingForm.previousElementSibling
-      ?.querySelector('[aria-expanded="true"]');
-    existingForm.remove();
-    existingButton?.setAttribute('aria-expanded', 'false');
-    if (existingForm.dataset.userId === user.id) {
-      resetButton.focus();
-      return;
-    }
+async function requestAdminPasswordReset(user, button) {
+  button.disabled = true;
+  try {
+    await apiFetch(
+      `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`,
+      { method: 'POST' },
+    );
+    setAdminMessage(`A password reset link was emailed to ${user.email}.`);
+  } catch (error) {
+    setAdminMessage(error.message, true);
+  } finally {
+    button.disabled = false;
   }
-
-  const form = document.createElement('form');
-  form.className = 'user-reset-form';
-  form.setAttribute('aria-label', `Set temporary password for ${user.name}`);
-  form.dataset.userId = user.id;
-
-  const submit = document.createElement('button');
-  submit.className = 'button button-primary';
-  submit.type = 'submit';
-  submit.textContent = 'Generate temporary password';
-  const cancel = document.createElement('button');
-  cancel.className = 'button button-quiet';
-  cancel.type = 'button';
-  cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', () => {
-    form.remove();
-    resetButton.setAttribute('aria-expanded', 'false');
-    resetButton.focus();
-  });
-  const hint = document.createElement('p');
-  hint.className = 'user-reset-hint';
-  hint.textContent = 'A secure password will be generated and shown once. Share it securely with the team member.';
-  form.append(hint, submit, cancel);
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    submit.disabled = true;
-    try {
-      const result = await apiFetch(
-        `/api/admin/users/${encodeURIComponent(user.id)}/password-reset`,
-        { method: 'POST' },
-      );
-      showGeneratedTemporaryPassword(
-        form,
-        user,
-        resetButton,
-        result.temporary_password,
-      );
-      const status = row.querySelector('.user-status');
-      if (status && !status.querySelector('.password-required')) {
-        const pending = document.createElement('span');
-        pending.className = 'password-required';
-        pending.textContent = 'Password change required';
-        status.append(pending);
-      }
-      setAdminMessage(
-        `A temporary password was generated for ${user.email}. It will not be shown again after this panel is closed.`,
-      );
-    } catch (error) {
-      setAdminMessage(error.message, true);
-      submit.disabled = false;
-    }
-  });
-
-  row.after(form);
-  submit.focus();
-  resetButton.setAttribute('aria-expanded', 'true');
-}
-
-function showGeneratedTemporaryPassword(form, user, resetButton, password) {
-  const heading = document.createElement('strong');
-  heading.textContent = `Temporary password for ${user.email}`;
-  const guidance = document.createElement('p');
-  guidance.className = 'user-reset-hint';
-  guidance.textContent = 'Copy it now and share it securely. The team member must change it when they sign in.';
-  const passwordField = document.createElement('input');
-  passwordField.type = 'text';
-  passwordField.value = password;
-  passwordField.readOnly = true;
-  passwordField.autocomplete = 'off';
-  passwordField.spellcheck = false;
-  passwordField.setAttribute('aria-label', 'Generated temporary password');
-
-  const actions = document.createElement('div');
-  actions.className = 'user-reset-result-actions';
-  const copy = document.createElement('button');
-  copy.className = 'button button-primary';
-  copy.type = 'button';
-  copy.textContent = 'Copy password';
-  copy.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(password);
-      copy.textContent = 'Copied';
-    } catch {
-      passwordField.focus();
-      passwordField.select();
-      copy.textContent = 'Select and copy';
-    }
-  });
-  const close = document.createElement('button');
-  close.className = 'button button-quiet';
-  close.type = 'button';
-  close.textContent = 'Done';
-  close.addEventListener('click', () => {
-    form.remove();
-    resetButton.setAttribute('aria-expanded', 'false');
-    resetButton.focus();
-  });
-  actions.append(copy, close);
-  form.replaceChildren(heading, guidance, passwordField, actions);
-  copy.focus();
 }
 
 async function setUserActive(user, button) {
@@ -1096,6 +1058,6 @@ function renderApprovedSops() {
 librarySearch.addEventListener('input', renderApprovedSops);
 refreshLibraryButton.addEventListener('click', loadApprovedSops);
 
-if (window.location.pathname === '/activate') {
+if (window.location.pathname === '/activate' || window.location.pathname === '/reset-password') {
   showActivationPage();
 }

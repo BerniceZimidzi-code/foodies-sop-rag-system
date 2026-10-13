@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 import hashlib
+import logging
 import re
 import secrets
 from typing import Annotated, Literal
@@ -25,26 +26,30 @@ from backend.auth import (
     hash_password,
     verify_password,
 )
-from backend.answering import answer_question
+from backend.answering import AnswerProviderError, answer_question, configured_answer_provider
 from backend.database import (
     activate_user,
     create_sop_version,
     create_user,
     change_user_password,
+    clear_password_reset_credentials,
+    consume_password_reset,
     delete_user,
     get_existing_user_emails,
     get_sop_sections,
     get_sop_version,
     get_user_by_activation_token_hash,
+    get_user_by_password_reset_token_hash,
     get_user_by_email,
     get_user_by_id,
+    issue_password_reset_for_email,
+    issue_password_reset_for_user,
     initialize_database,
     list_audit_logs,
     list_sop_events,
     list_sop_versions,
     list_users,
     record_audit_log,
-    reset_user_password,
     set_user_active,
     transition_sop_version,
     update_activation_credentials,
@@ -55,10 +60,19 @@ from backend.mailer import (
     EmailDeliveryError,
     activation_url,
     is_email_configured,
+    password_reset_url,
     send_activation_email,
+    send_password_reset_email,
 )
 from backend.sops import get_departments, load_sops, retrieve_sops
 from backend.user_import import UserImportError, parse_user_workbook
+
+LOGGER = logging.getLogger(__name__)
+PASSWORD_RESET_COOLDOWN = timedelta(minutes=1)
+PASSWORD_RESET_LIFETIME = timedelta(minutes=30)
+PASSWORD_RESET_CONFIRMATION = (
+    "If an active account exists for that email, a password reset link will be sent."
+)
 
 
 @asynccontextmanager
@@ -99,7 +113,6 @@ class LoginRequest(BaseModel):
 
 class ActivationRequest(BaseModel):
     token: str = Field(min_length=40, max_length=128)
-    temporary_password: str = Field(min_length=12, max_length=256)
     new_password: str = Field(min_length=12, max_length=256)
     confirm_password: str = Field(min_length=12, max_length=256)
 
@@ -107,8 +120,27 @@ class ActivationRequest(BaseModel):
     def passwords_must_match(self):
         if self.new_password != self.confirm_password:
             raise ValueError("The new passwords do not match.")
-        if self.new_password == self.temporary_password:
-            raise ValueError("Choose a new password that differs from the temporary password.")
+        return self
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_address(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class PasswordResetCompleteRequest(BaseModel):
+    token: str = Field(min_length=40, max_length=128)
+    new_password: str = Field(min_length=12, max_length=256)
+    confirm_password: str = Field(min_length=12, max_length=256)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("The new passwords do not match.")
         return self
 
 
@@ -207,18 +239,16 @@ def home(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
-def new_activation_credentials() -> tuple[str, str, str, str]:
+def new_activation_credentials() -> tuple[str, str, str]:
     if not is_email_configured():
         raise EmailConfigurationError(
             "Email is not configured. Set FOODIES_SMTP_HOST and FOODIES_EMAIL_FROM."
         )
-    temporary_password = secrets.token_urlsafe(18)
     activation_token = secrets.token_urlsafe(32)
     expires_at = (
         datetime.now(timezone.utc) + timedelta(hours=24)
     ).isoformat()
     return (
-        temporary_password,
         activation_token,
         expires_at,
         activation_url(activation_token),
@@ -228,34 +258,32 @@ def new_activation_credentials() -> tuple[str, str, str, str]:
 def send_invitation(
     email: str,
     name: str,
-    temporary_password: str,
     link: str,
 ) -> None:
     send_activation_email(
         email=email,
         name=name,
-        temporary_password=temporary_password,
         link=link,
     )
 
 
 def create_invited_user(payload: CreateUserRequest | BulkUserEntry) -> dict[str, str]:
-    temporary_password, activation_token, expires_at, link = new_activation_credentials()
+    activation_token, expires_at, link = new_activation_credentials()
     user_id = create_user(
         email=str(payload.email),
         name=payload.name,
         department=payload.department,
         role=payload.role,
-        password_hash=hash_password(temporary_password),
+        password_hash=hash_password(secrets.token_urlsafe(32)),
         is_active=False,
-        must_change_password=True,
+        must_change_password=False,
         activation_token_hash=hashlib.sha256(
             activation_token.encode("utf-8")
         ).hexdigest(),
         activation_expires_at=expires_at,
     )
     try:
-        send_invitation(str(payload.email), payload.name, temporary_password, link)
+        send_invitation(str(payload.email), payload.name, link)
     except (EmailConfigurationError, EmailDeliveryError) as exc:
         raise InvitationSendFailure(user_id, str(exc)) from exc
     return {"id": user_id, "email": str(payload.email)}
@@ -266,21 +294,64 @@ def send_invitation_for_existing_user(invited: dict) -> None:
         raise EmailConfigurationError(
             "This inactive account does not have a pending activation invitation."
         )
-    temporary_password, activation_token, expires_at, link = new_activation_credentials()
+    activation_token, expires_at, link = new_activation_credentials()
     token_hash = hashlib.sha256(activation_token.encode("utf-8")).hexdigest()
     updated = update_activation_credentials(
         invited["id"],
-        hash_password(temporary_password),
         token_hash,
         expires_at,
     )
     if not updated:
         raise EmailDeliveryError("The activation invitation could not be refreshed.")
-    send_invitation(invited["email"], invited["name"], temporary_password, link)
+    send_invitation(invited["email"], invited["name"], link)
+
+
+def send_password_reset_for_user(target: dict[str, str], *, enforce_cooldown: bool) -> bool:
+    if not is_email_configured():
+        raise EmailConfigurationError(
+            "Email is not configured. Set the SMTP environment variables before sending reset links."
+        )
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    expires_at = (now + PASSWORD_RESET_LIFETIME).isoformat()
+    requested_at = now.isoformat()
+    if enforce_cooldown:
+        updated_user = issue_password_reset_for_email(
+            target["email"],
+            token_hash,
+            expires_at,
+            requested_at,
+            (now - PASSWORD_RESET_COOLDOWN).isoformat(),
+        )
+    else:
+        updated_user = issue_password_reset_for_user(
+            target["id"],
+            token_hash,
+            expires_at,
+            requested_at,
+        )
+    if updated_user is None:
+        return False
+    try:
+        send_password_reset_email(
+            email=updated_user["email"],
+            name=updated_user["name"],
+            link=password_reset_url(token),
+        )
+    except (EmailConfigurationError, EmailDeliveryError):
+        clear_password_reset_credentials(updated_user["id"], token_hash)
+        raise
+    return True
 
 
 @app.get("/activate", response_class=HTMLResponse)
 def activate_page(request: Request):
+    return templates.TemplateResponse(request, "index.html")
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+def reset_password_page(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
@@ -316,28 +387,54 @@ def login(payload: LoginRequest):
 @app.post("/api/auth/activate")
 def activate_account(payload: ActivationRequest):
     token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
-    invited_user = get_user_by_activation_token_hash(token_hash)
-    if (
-        invited_user is None
-        or not verify_password(
-            payload.temporary_password,
-            invited_user["password_hash"],
-        )
-    ):
+    if get_user_by_activation_token_hash(token_hash) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The activation link or temporary password is invalid or expired.",
+            detail="The activation link is invalid, expired, or already used.",
         )
-    if not activate_user(
+    activated_user = activate_user(
         token_hash=token_hash,
-        expected_temporary_hash=invited_user["password_hash"],
         password_hash=hash_password(payload.new_password),
-    ):
+    )
+    if activated_user is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The activation link or temporary password is invalid or expired.",
+            detail="The activation link is invalid, expired, or already used.",
         )
-    return {"activated": True, "email": invited_user["email"]}
+    return {"activated": True, "email": activated_user["email"]}
+
+
+@app.post("/api/auth/password-reset")
+def request_password_reset(payload: PasswordResetRequest):
+    target = get_user_by_email(str(payload.email))
+    if target is not None and target["is_active"]:
+        try:
+            send_password_reset_for_user(target, enforce_cooldown=True)
+        except (EmailConfigurationError, EmailDeliveryError):
+            LOGGER.exception("Unable to deliver a password reset email.")
+    elif not is_email_configured():
+        LOGGER.error("Password reset requested while email delivery is not configured.")
+    return {"message": PASSWORD_RESET_CONFIRMATION}
+
+
+@app.post("/api/auth/password-reset/confirm")
+def complete_password_reset(payload: PasswordResetCompleteRequest):
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    if get_user_by_password_reset_token_hash(token_hash) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The password reset link is invalid, expired, or already used.",
+        )
+    reset_user = consume_password_reset(
+        token_hash,
+        hash_password(payload.new_password),
+    )
+    if reset_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The password reset link is invalid, expired, or already used.",
+        )
+    return {"reset": True, "email": reset_user["email"]}
 
 
 @app.post("/api/auth/change-password")
@@ -348,7 +445,7 @@ def change_password(
     if verify_password(payload.new_password, user["password_hash"]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Choose a new password that differs from the temporary password.",
+            detail="Choose a password that differs from your current password.",
         )
     if not change_user_password(
         user["id"],
@@ -411,7 +508,27 @@ def query_sop(
         department = user["department"]
 
     matches = retrieve_sops(payload.question, department)
-    result = answer_question(payload.question, department, matches)
+    try:
+        provider = configured_answer_provider() if matches else None
+        result = answer_question(payload.question, department, matches, provider=provider)
+    except AnswerProviderError as exc:
+        LOGGER.error("Answer provider failed: %s", exc)
+        record_audit_log(
+            user_id=user["id"],
+            email=user["email"],
+            department=user["department"],
+            role=user["role"],
+            question=payload.question,
+            answer="Answer generation failed; no answer was returned.",
+            retrieved_sops=[item["sop_id"] for item in matches],
+            citations=[],
+            success=False,
+            missing_sop=False,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Answer generation is temporarily unavailable. Please try again.",
+        ) from exc
     record_audit_log(
         user_id=user["id"],
         email=user["email"],
@@ -642,13 +759,18 @@ def admin_reset_user_password(
             status_code=status.HTTP_409_CONFLICT,
             detail="This account has not been activated. Resend its activation email instead.",
         )
-    temporary_password = secrets.token_urlsafe(18)
-    if not reset_user_password(user_id, hash_password(temporary_password)):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    try:
+        sent = send_password_reset_for_user(target, enforce_cooldown=False)
+    except (EmailConfigurationError, EmailDeliveryError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"The password reset email could not be sent: {exc}",
+        ) from exc
+    if not sent:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The account is no longer active.")
     return {
         "id": user_id,
-        "must_change_password": True,
-        "temporary_password": temporary_password,
+        "email_sent": True,
     }
 
 

@@ -41,6 +41,9 @@ def initialize_database() -> None:
                 is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
                 activation_token_hash TEXT,
                 activation_expires_at TEXT,
+                password_reset_token_hash TEXT,
+                password_reset_expires_at TEXT,
+                password_reset_requested_at TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -139,6 +142,12 @@ def initialize_database() -> None:
             connection.execute("ALTER TABLE users ADD COLUMN activation_token_hash TEXT")
         if "activation_expires_at" not in user_columns:
             connection.execute("ALTER TABLE users ADD COLUMN activation_expires_at TEXT")
+        if "password_reset_token_hash" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN password_reset_token_hash TEXT")
+        if "password_reset_expires_at" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT")
+        if "password_reset_requested_at" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN password_reset_requested_at TEXT")
 
 
 def create_user(
@@ -227,7 +236,6 @@ def get_user_by_activation_token_hash(token_hash: str) -> dict[str, Any] | None:
 
 def update_activation_credentials(
     user_id: str,
-    password_hash: str,
     token_hash: str,
     expires_at: str,
 ) -> bool:
@@ -235,12 +243,12 @@ def update_activation_credentials(
         cursor = connection.execute(
             """
             UPDATE users
-            SET password_hash = ?, is_active = 0, must_change_password = 1,
+            SET is_active = 0, must_change_password = 0,
                 activation_token_hash = ?, activation_expires_at = ?,
                 auth_version = auth_version + 1
             WHERE id = ?
             """,
-            (password_hash, token_hash, expires_at, user_id),
+            (token_hash, expires_at, user_id),
         )
     return cursor.rowcount == 1
 
@@ -259,18 +267,123 @@ def list_users() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def reset_user_password(user_id: str, password_hash: str) -> bool:
+def issue_password_reset_for_email(
+    email: str,
+    token_hash: str,
+    expires_at: str,
+    requested_at: str,
+    cooldown_before: str,
+) -> dict[str, str] | None:
     with connect() as connection:
         cursor = connection.execute(
             """
             UPDATE users
-            SET password_hash = ?, must_change_password = 1,
-                auth_version = auth_version + 1
-            WHERE id = ?
+            SET password_reset_token_hash = ?, password_reset_expires_at = ?,
+                password_reset_requested_at = ?
+            WHERE email = ? AND is_active = 1
+                AND (
+                    password_reset_requested_at IS NULL
+                    OR password_reset_requested_at <= ?
+                )
             """,
-            (password_hash, user_id),
+            (
+                token_hash,
+                expires_at,
+                requested_at,
+                email.strip().lower(),
+                cooldown_before,
+            ),
         )
-    return cursor.rowcount > 0
+        if cursor.rowcount != 1:
+            return None
+        row = connection.execute(
+            "SELECT id, email, name FROM users WHERE email = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def issue_password_reset_for_user(
+    user_id: str,
+    token_hash: str,
+    expires_at: str,
+    requested_at: str,
+) -> dict[str, str] | None:
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE users
+            SET password_reset_token_hash = ?, password_reset_expires_at = ?,
+                password_reset_requested_at = ?
+            WHERE id = ? AND is_active = 1
+            """,
+            (token_hash, expires_at, requested_at, user_id),
+        )
+        if cursor.rowcount != 1:
+            return None
+        row = connection.execute(
+            "SELECT id, email, name FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_password_reset_token_hash(token_hash: str) -> dict[str, Any] | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM users
+            WHERE password_reset_token_hash = ?
+                AND password_reset_expires_at > ? AND is_active = 1
+            """,
+            (token_hash, _now()),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def clear_password_reset_credentials(user_id: str, token_hash: str) -> bool:
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE users
+            SET password_reset_token_hash = NULL, password_reset_expires_at = NULL
+            WHERE id = ? AND password_reset_token_hash = ?
+            """,
+            (user_id, token_hash),
+        )
+    return cursor.rowcount == 1
+
+
+def consume_password_reset(
+    token_hash: str,
+    password_hash: str,
+) -> dict[str, str] | None:
+    now = _now()
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, email FROM users
+            WHERE password_reset_token_hash = ?
+                AND password_reset_expires_at > ? AND is_active = 1
+            """,
+            (token_hash, now),
+        ).fetchone()
+        if row is None:
+            return None
+        cursor = connection.execute(
+            """
+            UPDATE users
+            SET password_hash = ?, must_change_password = 0,
+                auth_version = auth_version + 1,
+                password_reset_token_hash = NULL,
+                password_reset_expires_at = NULL
+            WHERE id = ? AND password_reset_token_hash = ?
+                AND password_reset_expires_at > ? AND is_active = 1
+            """,
+            (password_hash, row["id"], token_hash, now),
+        )
+        if cursor.rowcount != 1:
+            return None
+    return {"id": str(row["id"]), "email": str(row["email"])}
 
 
 def change_user_password(
@@ -283,7 +396,9 @@ def change_user_password(
             """
             UPDATE users
             SET password_hash = ?, must_change_password = 0,
-                auth_version = auth_version + 1
+                auth_version = auth_version + 1,
+                password_reset_token_hash = NULL,
+                password_reset_expires_at = NULL
             WHERE id = ? AND must_change_password = 1 AND auth_version = ?
             """,
             (password_hash, user_id, expected_auth_version),
@@ -298,10 +413,19 @@ def set_user_active(user_id: str, is_active: bool) -> bool:
             UPDATE users
             SET is_active = ?, auth_version = auth_version + 1,
                 activation_token_hash = CASE WHEN ? = 0 THEN NULL ELSE activation_token_hash END,
-                activation_expires_at = CASE WHEN ? = 0 THEN NULL ELSE activation_expires_at END
+                activation_expires_at = CASE WHEN ? = 0 THEN NULL ELSE activation_expires_at END,
+                password_reset_token_hash = CASE WHEN ? = 0 THEN NULL ELSE password_reset_token_hash END,
+                password_reset_expires_at = CASE WHEN ? = 0 THEN NULL ELSE password_reset_expires_at END
             WHERE id = ?
             """,
-            (int(is_active), int(is_active), int(is_active), user_id),
+            (
+                int(is_active),
+                int(is_active),
+                int(is_active),
+                int(is_active),
+                int(is_active),
+                user_id,
+            ),
         )
     return cursor.rowcount > 0
 
@@ -330,33 +454,35 @@ def delete_user(user_id: str) -> bool:
 def activate_user(
     *,
     token_hash: str,
-    expected_temporary_hash: str,
     password_hash: str,
-) -> bool:
+) -> dict[str, str] | None:
     now = _now()
     with connect() as connection:
         row = connection.execute(
             """
-            SELECT id, password_hash FROM users
+            SELECT id, email FROM users
             WHERE activation_token_hash = ? AND activation_expires_at > ?
                 AND is_active = 0
             """,
             (token_hash, now),
         ).fetchone()
-        if row is None or row["password_hash"] != expected_temporary_hash:
-            return False
+        if row is None:
+            return None
         cursor = connection.execute(
             """
             UPDATE users
             SET password_hash = ?, is_active = 1, must_change_password = 0,
                 auth_version = auth_version + 1,
-                activation_token_hash = NULL, activation_expires_at = NULL
+                activation_token_hash = NULL, activation_expires_at = NULL,
+                password_reset_token_hash = NULL, password_reset_expires_at = NULL
             WHERE id = ? AND activation_token_hash = ? AND is_active = 0
                 AND activation_expires_at > ?
             """,
             (password_hash, row["id"], token_hash, now),
         )
-    return cursor.rowcount == 1
+        if cursor.rowcount != 1:
+            return None
+    return {"id": str(row["id"]), "email": str(row["email"])}
 
 
 def record_audit_log(

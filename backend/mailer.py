@@ -45,7 +45,7 @@ def is_email_configured() -> bool:
     )
 
 
-def activation_url(token: str) -> str:
+def _application_base_url() -> str:
     base_url = os.getenv("FOODIES_BASE_URL", "http://127.0.0.1:8127").rstrip("/")
     parsed = urlsplit(base_url)
     if (
@@ -63,16 +63,18 @@ def activation_url(token: str) -> str:
         raise EmailConfigurationError(
             "FOODIES_BASE_URL must use HTTPS, except for localhost development."
         )
-    return f"{base_url}/activate#token={token}"
+    return base_url
 
 
-def send_activation_email(
-    *,
-    email: str,
-    name: str,
-    temporary_password: str,
-    link: str,
-) -> None:
+def activation_url(token: str) -> str:
+    return f"{_application_base_url()}/activate#token={token}"
+
+
+def password_reset_url(token: str) -> str:
+    return f"{_application_base_url()}/reset-password#token={token}"
+
+
+def _send_email(message: EmailMessage) -> None:
     host = os.getenv("FOODIES_SMTP_HOST", "").strip()
     sender = os.getenv("FOODIES_EMAIL_FROM", "").strip()
     if not host or not sender:
@@ -98,28 +100,7 @@ def send_activation_email(
     if not 1 <= port <= 65535:
         raise EmailConfigurationError("FOODIES_SMTP_PORT must be between 1 and 65535.")
 
-    message = EmailMessage()
-    message["Subject"] = "Activate your Foodies SOP Assistant account"
     message["From"] = sender
-    message["To"] = email
-    message.set_content(
-        f"""Hello {name},
-
-An administrator created your Foodies SOP Assistant account.
-
-Activate your account and choose a new password using this one-time link:
-{link}
-
-Temporary password: {temporary_password}
-
-The link expires in 24 hours. Enter the temporary password on the activation
-page, then choose a new password. The link and temporary password cannot be
-used again after activation.
-
-If you were not expecting this message, contact your Foodies administrator.
-"""
-    )
-
     try:
         if security == "ssl":
             with smtplib.SMTP_SSL(host, port, timeout=15) as server:
@@ -137,5 +118,60 @@ If you were not expecting this message, contact your Foodies administrator.
                 server.send_message(message)
     except (OSError, smtplib.SMTPException) as exc:
         raise EmailDeliveryError(
-            "The invitation email could not be sent. Check SMTP settings and try again."
+            "The email could not be sent. Check SMTP settings and try again."
+        ) from exc
+
+
+def send_activation_email(
+    *,
+    email: str,
+    name: str,
+    link: str,
+) -> None:
+    message = EmailMessage()
+    message["Subject"] = "Activate your Foodies SOP Assistant account"
+    message["To"] = email
+    message.set_content(
+        f"""Hello {name},
+
+An administrator created your Foodies SOP Assistant account.
+
+Activate your account and choose your password using this one-time link:
+{link}
+
+The link expires in 24 hours and can only be used once. If it has expired,
+contact your administrator to request a new invitation.
+
+If you were not expecting this message, contact your Foodies administrator.
+"""
+    )
+    _send_email(message)
+
+
+def send_password_reset_email(
+    *,
+    email: str,
+    name: str,
+    link: str,
+) -> None:
+    message = EmailMessage()
+    message["Subject"] = "Reset your Foodies SOP Assistant password"
+    message["To"] = email
+    message.set_content(
+        f"""Hello {name},
+
+Use this one-time link to choose a new password for your Foodies SOP Assistant account:
+{link}
+
+The link expires in 30 minutes. If you did not request a password reset, you
+can ignore this message; your password will not change.
+
+If the link has expired, request another password reset from the sign-in page.
+"""
+    )
+    try:
+        _send_email(message)
+    except EmailDeliveryError as exc:
+        raise EmailDeliveryError(
+            "The password reset email could not be sent. Check SMTP settings and try again."
         ) from exc

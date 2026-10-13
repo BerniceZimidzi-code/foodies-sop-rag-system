@@ -10,12 +10,15 @@ from backend.database import create_user, initialize_database
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Foodies SOP assistant users.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    create_parser = subparsers.add_parser("create-user", help="Create a staff or admin account.")
+    create_parser = subparsers.add_parser(
+        "create-user",
+        help="Create the bootstrap administrator account.",
+    )
     create_parser.add_argument("--email", required=True)
     create_parser.add_argument("--name", required=True)
     create_parser.add_argument("--department", required=True)
     create_parser.add_argument(
-        "--role", choices=("staff", "manager", "admin"), required=True
+        "--role", choices=("admin",), required=True
     )
     args = parser.parse_args()
 

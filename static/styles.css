@@ -70,6 +70,10 @@ input, select, textarea { width: 100%; min-height: 43px; padding: 10px 12px; bor
 input::placeholder, textarea::placeholder { color: #a09e95; }
 input:focus, select:focus, textarea:focus { border-color: #d8ad20; outline: none; box-shadow: 0 0 0 3px rgba(246, 201, 40, .16); }
 .login-card .button { margin-top: 24px; }
+.text-button { display: inline-block; padding: 10px 0; border: 0; background: transparent; color: #69530b; font-size: 12px; font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.text-button:hover { color: var(--ink); }
+.login-card .text-button { margin-top: 8px; }
+.password-change-card .text-button { margin-top: 16px; }
 .login-footnote { display: flex; justify-content: center; gap: 7px; margin-top: 23px; padding-top: 17px; border-top: 1px solid #f0eee8; color: var(--muted); font-size: 11px; }
 .login-footnote span { color: var(--green); }
 .password-change-panel { display: grid; min-height: 590px; place-items: center; padding: 48px 18px; background: var(--yellow); }

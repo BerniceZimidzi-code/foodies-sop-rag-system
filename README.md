@@ -20,12 +20,13 @@ SQLite audit log.
 - Successful and no-match queries are recorded in `data/foodies.sqlite3`.
 - SOP source files remain version-controlled in Git.
 
-The current retrieval is lexical and the default answer provider is extractive;
-this MVP does not call an LLM, create embeddings, or browse the web. Answer
-generation is isolated behind the `AnswerProvider` interface in
-`backend/answering.py`. A future model provider can receive only retrieved SOP
-sections; citations remain assembled from backend metadata. No model provider
-or API credentials are configured until a provider is chosen. Entra ID/SSO,
+Retrieval is lexical. Answer generation uses the provider selected by
+`FOODIES_LLM_PROVIDER` (`extractive` by default, `ollama` for a local model, or
+`openai` for hosted API use). Both LLM providers receive only the question and
+up to three authorized retrieved excerpts, not the full SOP library, account
+data, or filesystem paths. The Ollama adapter only permits a loopback HTTP
+endpoint, so test prompts and excerpts stay on this computer. Backend-owned
+citations are returned separately from the model answer. Entra ID/SSO,
 PostgreSQL with pgvector, automated Git-based reindexing, and a production
 deployment pipeline are follow-on integrations rather than configured services.
 
@@ -71,8 +72,9 @@ settings are read automatically:
 .\.venv\Scripts\python.exe -m uvicorn app:app --reload --host 127.0.0.1 --port 8127
 ```
 
-Open <http://127.0.0.1:8127> and sign in. To create more accounts, use the
-administration panel or run the CLI again.
+Open <http://127.0.0.1:8127> and sign in. Use the administration panel to
+create staff and manager accounts; each worker receives an invitation link and
+sets their own password. The CLI is for bootstrapping administrator accounts.
 
 Set `FOODIES_DATABASE_PATH` to use a different SQLite database file. Back up the
 database as well as the SOP Git repository. The JWT secret must be stable across
@@ -121,11 +123,15 @@ this MVP.
   activation invitation.
 - `DELETE /api/admin/users/{user_id}` — permanently remove an account; audit
   and SOP-review history is retained.
-- `POST /api/admin/users/{user_id}/password-reset` — generate a temporary
-  password once; the user's existing sessions are revoked and they must change
-  it before use.
-- `POST /api/auth/activate` — use the one-time email token and temporary
-  password to activate an account and choose its permanent password.
+- `POST /api/admin/users/{user_id}/password-reset` — send a password-reset link
+  to an active user's registered email address; no password is returned to the
+  administrator.
+- `POST /api/auth/password-reset` — request a reset link. The response is
+  identical whether an active account exists or not.
+- `POST /api/auth/password-reset/confirm` — consume a one-time reset token and
+  set a new password.
+- `POST /api/auth/activate` — use the one-time invitation token to activate an
+  account and choose its password.
 - `POST /api/auth/change-password` — complete a required password change.
 - `PATCH /api/admin/users/{user_id}/active` — activate/deactivate an account.
 - `GET /api/admin/audit-logs?limit=100` — administrator-only audit export view.
@@ -156,12 +162,22 @@ invalidated by a password reset lose access immediately. The app has no public
 registration route.
 
 Accounts created in the admin panel or bulk import remain inactive until
-activation. The app emails a random temporary password and a 24-hour activation
-link. The activation token is stored only as a hash, is passed in the URL
-fragment (not sent in HTTP requests or normal access logs), and is cleared after
-successful activation. Activation replaces the temporary password, so neither
-the link nor temporary password can be reused. Failed email delivery leaves the
-account inactive and available for an administrator to resend the invitation.
+activation. The app emails a one-time invitation link that expires after 24
+hours; the worker chooses their own password on the activation page. The
+activation token is stored only as a hash, is passed in the URL fragment (not
+sent in HTTP requests or normal access logs), and is cleared after successful
+activation. Failed email delivery leaves the account inactive and available for
+an administrator to resend the invitation. No temporary password is sent or
+shown to administrators.
+
+Workers can request a password reset from the sign-in page. For active accounts,
+the app emails a one-time link that expires after 30 minutes; only the link's
+token hash is stored, and successful use changes the password, consumes the
+token, and invalidates existing sessions. Requests are throttled per account,
+and the response does not disclose whether an email belongs to an account.
+Administrators can trigger a reset email from the team account list but cannot
+view or set the worker's password. If reset email delivery fails, the failed
+token is cleared and the event is recorded in server logs.
 
 Administrators may upload an Excel `.xlsx` file with a header row containing
 `name`, `email`, `department`, and `role` columns (case-insensitive). The preview
@@ -214,6 +230,56 @@ For local development, `FOODIES_BASE_URL` must use the same port as Uvicorn.
 For example, if Uvicorn uses `--port 8128`, set it to
 `http://127.0.0.1:8128`, restart the app, and resend any invitation created
 with the old URL.
+
+### Configure OpenAI answer generation
+
+The default remains extractive until explicitly changed. Create an API key in
+the OpenAI API platform (a ChatGPT subscription is separate from API billing),
+then set these values in the ignored local `.env` file:
+
+```dotenv
+FOODIES_LLM_PROVIDER=openai
+OPENAI_API_KEY=your-api-key
+FOODIES_OPENAI_MODEL=gpt-4.1-mini
+```
+
+`gpt-4.1-mini` is the initial low-cost default for short, grounded SOP answers;
+the model name is configurable. Check current model availability and pricing in
+the [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-4.1-mini)
+before enabling billing. Set an API project budget/usage alert, never commit or
+share the key, and restart Uvicorn after changing `.env`. Only the worker's
+question and at most three retrieved sections are sent to the API. Review
+OpenAI's current data controls and your organization's policy before sending
+internal SOP content to any external service. If the provider fails, the app
+returns a service-unavailable error rather than substituting an ungrounded
+answer.
+
+### Run a local free model with Ollama
+
+Install Ollama for Windows from [ollama.com/download/windows](https://ollama.com/download/windows),
+then open a new PowerShell terminal and download the small Qwen 2.5 3B model:
+
+```powershell
+ollama pull qwen2.5:3b
+```
+
+Ollama runs its local API at `http://127.0.0.1:11434` by default. In the ignored
+`.env` file set:
+
+```dotenv
+FOODIES_LLM_PROVIDER=ollama
+FOODIES_OLLAMA_BASE_URL=http://127.0.0.1:11434
+FOODIES_OLLAMA_MODEL=qwen2.5:3b
+```
+
+Restart Uvicorn and ask a question covered by an approved SOP. The model runs on
+the local machine; no OpenAI key or hosted inference charge is needed. Hardware
+affects response speed and memory use. If the model is too slow, use a smaller
+tag/model supported by Ollama or continue with the extractive provider. Keep
+the Ollama endpoint on loopback; the application rejects non-local Ollama
+URLs. Ollama and the selected model have their own licenses; review those terms
+before redistribution or production use. For production, change the provider
+deliberately after reviewing data handling, reliability, and cost.
 
 Before production deployment, integrate the company's SSO/identity provider,
 use managed PostgreSQL and encrypted backups, set HTTPS and ingress rate limits,

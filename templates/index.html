@@ -58,7 +58,24 @@
               </button>
             </form>
             <p id="login-error" class="form-message error hidden" role="alert"></p>
+            <button id="forgot-password-link" class="text-button" type="button">Forgot password?</button>
             <div class="login-footnote"><span aria-hidden="true">▣</span> Secure access for Foodies team members</div>
+          </div>
+        </section>
+
+        <section id="forgot-password-panel" class="password-change-panel hidden">
+          <div class="password-change-card">
+            <span class="card-icon" aria-hidden="true">✉</span>
+            <p class="eyebrow">ACCOUNT RECOVERY</p>
+            <h1>Reset your password</h1>
+            <p class="muted">Enter your work email. If it belongs to an active account, we’ll send a one-time reset link.</p>
+            <form id="forgot-password-form">
+              <label for="forgot-password-email">Work email</label>
+              <input id="forgot-password-email" type="email" autocomplete="email" required />
+              <button id="forgot-password-submit" class="button button-primary button-wide" type="submit">Send reset link <span aria-hidden="true">→</span></button>
+            </form>
+            <p id="forgot-password-message" class="form-message" role="status"></p>
+            <button id="forgot-password-back" class="text-button" type="button">Back to sign in</button>
           </div>
         </section>
 
@@ -67,7 +84,7 @@
             <span class="card-icon" aria-hidden="true">⌑</span>
             <p class="eyebrow">ACCOUNT SECURITY</p>
             <h1>Set your password</h1>
-            <p class="muted">An administrator gave you a temporary password. Choose a new one before continuing.</p>
+            <p class="muted">Choose a new password to continue to your account.</p>
             <form id="password-change-form">
               <label for="new-user-password">New password <span class="label-note">12+ characters</span></label>
               <input id="new-user-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
@@ -81,18 +98,16 @@
 
         <section id="activation-panel" class="password-change-panel hidden">
           <div class="password-change-card">
-            <span class="card-icon" aria-hidden="true">✉</span>
-            <p class="eyebrow">ACCOUNT ACTIVATION</p>
-            <h1>Activate your account</h1>
-            <p class="muted">Enter the temporary password from your invitation email, then choose a new password.</p>
+            <span class="card-icon" aria-hidden="true">✳</span>
+            <p id="credential-eyebrow" class="eyebrow">ACCOUNT ACTIVATION</p>
+            <h1 id="credential-title">Activate your account</h1>
+            <p id="credential-description" class="muted">Choose a password to finish activating your account.</p>
             <form id="activation-form">
-              <label for="activation-temporary-password">Temporary password from email</label>
-              <input id="activation-temporary-password" type="password" minlength="12" maxlength="256" autocomplete="current-password" required />
               <label for="activation-new-password">New password <span class="label-note">12+ characters</span></label>
               <input id="activation-new-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
               <label for="activation-confirm-password">Confirm new password</label>
               <input id="activation-confirm-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required />
-              <button id="activation-submit" class="button button-primary button-wide" type="submit">Activate and set password <span aria-hidden="true">→</span></button>
+              <button id="activation-submit" class="button button-primary button-wide" type="submit">Set password <span aria-hidden="true">→</span></button>
             </form>
             <p id="activation-message" class="form-message" role="status"></p>
             <button id="activation-continue" class="button button-quiet button-wide hidden" type="button">Continue to sign in</button>
@@ -207,7 +222,7 @@
                 <div id="sop-list" class="sop-list"><p class="sources-empty">Loading SOP versions…</p></div>
               </section>
               <form id="create-user-form" class="admin-card">
-                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">＋</span><div><h3>Add one team member</h3><p>We’ll email a one-time activation link and temporary password.</p></div></div>
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">＋</span><div><h3>Add one team member</h3><p>We’ll email a one-time link so they can activate their account and set a password.</p></div></div>
                 <label for="new-name">Full name</label>
                 <input id="new-name" required maxlength="120" placeholder="Team member name" />
                 <label for="new-email">Work email</label>
