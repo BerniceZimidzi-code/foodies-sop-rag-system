@@ -73,9 +73,17 @@ def ingest_document(filename: str, content: bytes) -> list[dict[str, str]]:
 
 
 def save_original(filename: str, content: bytes) -> Path:
-    extension = Path(filename).suffix.casefold()
+    extension = _safe_extension(filename)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     target = UPLOAD_DIR / f"{uuid.uuid4().hex}{extension}"
+    target.write_bytes(content)
+    return target
+
+
+def save_failed_upload(filename: str, content: bytes) -> Path:
+    failed_directory = UPLOAD_DIR / "failed"
+    failed_directory.mkdir(parents=True, exist_ok=True)
+    target = failed_directory / f"{uuid.uuid4().hex}{_safe_extension(filename)}"
     target.write_bytes(content)
     return target
 
@@ -192,6 +200,11 @@ def _split_section(heading: str, body: str) -> list[dict[str, str]]:
     if current:
         append_chunk(current)
     return chunks
+
+
+def _safe_extension(filename: str) -> str:
+    extension = Path(filename).suffix.casefold()
+    return extension if re.fullmatch(r"\.[a-z0-9]{1,10}", extension) else ".bin"
 
 
 def metadata_for_storage(metadata: dict[str, Any]) -> dict[str, str]:

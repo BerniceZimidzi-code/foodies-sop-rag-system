@@ -141,7 +141,7 @@
               <form id="query-form">
                 <label for="question">Your question</label>
                 <textarea id="question" maxlength="2000" placeholder="e.g. How often should I check cold room temperatures?" required></textarea>
-                <div class="input-footer"><span>Be specific for the best result</span><span id="character-count">0 / 2000</span></div>
+                <div class="input-footer"><span>Press Enter to ask · Shift+Enter for a new line</span><span id="character-count">0 / 2000</span></div>
                 <button id="submit" class="button button-primary button-wide" type="submit">
                   <span>Find an answer</span><span aria-hidden="true">→</span>
                 </button>
@@ -185,8 +185,18 @@
               </div>
               <button id="refresh-library" class="button button-quiet" type="button">Refresh</button>
             </div>
-            <label class="visually-hidden" for="library-search">Search approved SOPs</label>
-            <input id="library-search" class="library-search" type="search" placeholder="Search by SOP ID, title, or department" />
+            <div class="document-filters">
+              <label class="visually-hidden" for="library-search">Search approved documents</label>
+              <input id="library-search" class="library-search" type="search" placeholder="Search title, ID, tags, department" />
+              <label class="visually-hidden" for="library-category-filter">Filter by category</label>
+              <select id="library-category-filter"><option value="">All categories</option></select>
+              <label class="visually-hidden" for="library-tag-filter">Filter by tag</label>
+              <input id="library-tag-filter" type="search" placeholder="Tag" />
+              <label class="visually-hidden" for="library-date-after">Effective from</label>
+              <input id="library-date-after" type="date" />
+              <label class="visually-hidden" for="library-date-before">Effective through</label>
+              <input id="library-date-before" type="date" />
+            </div>
             <div id="library-list" class="library-list" aria-live="polite">
               <p class="sources-empty">Sign in to load your approved procedures.</p>
             </div>
@@ -199,6 +209,69 @@
             </div>
             <p id="email-setup-warning" class="form-message email-setup-warning hidden" role="status"></p>
             <div class="admin-grid">
+              <section class="admin-card" aria-labelledby="document-categories-title">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">▦</span><div><h3 id="document-categories-title">Document categories</h3><p>Manage categories without changing document records.</p></div></div>
+                <form id="category-create-form" class="category-create-form">
+                  <label for="category-name">New category</label>
+                  <input id="category-name" required maxlength="100" placeholder="Category name" />
+                  <label for="category-description">Description <span class="label-note">optional</span></label>
+                  <input id="category-description" maxlength="500" placeholder="What belongs here?" />
+                  <button class="button button-primary button-wide" type="submit">Add category</button>
+                </form>
+                <p id="category-message" class="form-message" role="status"></p>
+                <div id="category-list" class="category-list" aria-live="polite"></div>
+              </section>
+              <section class="admin-card document-bulk-card" aria-labelledby="document-bulk-title">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">⇧</span><div><h3 id="document-bulk-title">Bulk upload documents</h3><p>Set a category for the batch, then adjust individual files if needed.</p></div></div>
+                <label for="document-bulk-default-category">Default category for this batch</label>
+                <select id="document-bulk-default-category"><option value="">Choose a batch category…</option></select>
+                <span class="field-hint">This applies to all selected files. You can override the category on individual files below.</span>
+                <label for="document-bulk-default-department">Default department for this batch</label>
+                <input id="document-bulk-default-department" type="text" maxlength="100" placeholder="e.g. Kitchen or Maintenance" />
+                <span class="field-hint">This applies to all selected files. Department-scoped users start with their own department; admins can enter one here.</span>
+                <label for="document-bulk-files">Documents</label>
+                <input id="document-bulk-files" type="file" accept=".md,.pdf,.docx" multiple />
+                <span class="field-hint">Markdown, text PDF, or Word · 15 MB per file · up to 30 files per batch. SOP IDs are detected from the document or filename when possible, otherwise generated automatically. Enter an ID to override.</span>
+                <div id="document-bulk-metadata" class="document-bulk-metadata"></div>
+                <button id="document-bulk-submit" class="button button-primary button-wide" type="button" disabled>Upload selected documents</button>
+                <progress id="document-upload-progress" class="document-upload-progress hidden" max="100" value="0"></progress>
+                <p id="document-bulk-message" class="form-message" role="status"></p>
+                <ul id="document-bulk-results" class="document-upload-results" aria-live="polite"></ul>
+              </section>
+              <section class="admin-card document-catalog-card" aria-labelledby="document-catalog-title">
+                <div class="audit-heading">
+                  <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">▤</span><div><h3 id="document-catalog-title">Document catalogue</h3><p>Search, correct, download, archive, restore, or remove documents.</p></div></div>
+                  <button id="refresh-document-catalog" class="button button-quiet" type="button">Refresh</button>
+                </div>
+                <p class="field-hint">Edit metadata changes document details and search tags. Tags are keywords that help staff find SOPs. Archive hides an approved SOP from staff without deleting it; Delete moves it to Deleted, where an admin can restore it. Replace uploads a new version for review while the current approved version stays available.</p>
+                <div class="document-filters admin-document-filters">
+                  <input id="admin-document-search" type="search" placeholder="Search title, ID, tags, department" />
+                  <select id="admin-document-category"><option value="">All categories</option></select>
+                  <select id="admin-document-status"><option value="">All statuses</option><option value="pending_review">Pending review</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="archived">Archived</option></select>
+                  <input id="admin-document-tag" type="search" placeholder="Tag" />
+                  <label class="visually-hidden" for="admin-document-date-after">Effective from</label>
+                  <input id="admin-document-date-after" type="date" />
+                  <label class="visually-hidden" for="admin-document-date-before">Effective through</label>
+                  <input id="admin-document-date-before" type="date" />
+                  <label class="checkbox-label"><input id="admin-show-deleted" type="checkbox" /> Show deleted</label>
+                </div>
+                <div id="document-catalog-list" class="sop-list" aria-live="polite"><p class="sources-empty">Loading documents…</p></div>
+              </section>
+              <section class="admin-card failed-upload-card" aria-labelledby="failed-upload-title">
+                <div class="audit-heading">
+                  <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">!</span><div><h3 id="failed-upload-title">Failed uploads</h3><p>Original files are retained for review and correction.</p></div></div>
+                  <button id="refresh-failed-uploads" class="button button-quiet" type="button">Refresh</button>
+                </div>
+                <div id="failed-upload-list" class="sop-list" aria-live="polite"></div>
+              </section>
+              <section class="admin-card document-audit-card" aria-labelledby="document-audit-title">
+                <div class="audit-heading">
+                  <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">≡</span><div><h3 id="document-audit-title">Document activity</h3><p>Search uploads, edits, downloads, reviews, category changes, and deletions.</p></div></div>
+                  <button id="search-document-audit" class="button button-quiet" type="button">Search</button>
+                </div>
+                <input id="document-audit-search" type="search" placeholder="Search actor, action, document, or details" />
+                <div id="document-audit-list" class="audit-list" aria-live="polite"></div>
+              </section>
               <form id="sop-upload-form" class="admin-card">
                 <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">↑</span><div><h3>Upload a procedure</h3><p>Files are extracted and queued for administrator review before they can be searched.</p></div></div>
                 <div class="sop-form-grid">
@@ -206,6 +279,9 @@
                   <div><label for="sop-id">SOP ID</label><input id="sop-id" name="sop_id" required maxlength="120" placeholder="e.g. SOP-KIT-001" /></div>
                   <div><label for="sop-title">Title</label><input id="sop-title" name="title" required maxlength="200" placeholder="Procedure title" /></div>
                   <div><label for="sop-department">Department</label><input id="sop-department" name="department" required maxlength="100" placeholder="e.g. Kitchen" /></div>
+                  <div><label for="sop-category">Category</label><select id="sop-category" name="category_id"><option value="">Choose category or flag for review</option></select></div>
+                  <div><label for="sop-document-type">Document type</label><input id="sop-document-type" name="document_type" maxlength="80" value="SOP" /></div>
+                  <div><label for="sop-tags">Tags <span class="label-note">search keywords · comma-separated</span></label><input id="sop-tags" name="tags" maxlength="500" placeholder="hygiene, temperature" /></div>
                   <div><label for="sop-owner">Owner</label><input id="sop-owner" name="owner" required maxlength="150" placeholder="Role or name" /></div>
                   <div><label for="sop-version">Version</label><input id="sop-version" name="version" required maxlength="40" placeholder="1.0" /></div>
                   <div><label for="sop-effective-date">Effective date</label><input id="sop-effective-date" name="effective_date" type="date" required /></div>

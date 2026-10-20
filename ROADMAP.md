@@ -8,6 +8,11 @@ a dependable internal SOP assistant. It intentionally does not include secrets.
 - FastAPI application with SQLite accounts, department-scoped access, and audit
   logging.
 - SOP upload, review, approval, versioning, and extractive answers with citations.
+- Admin-managed, database-backed document categories and bulk document
+  management with category-aware review, version replacement, soft deletion,
+  failed-upload recovery, batch-default category/department values with per-file
+  overrides, automatic or document-detected SOP IDs, department-scoped access,
+  and document audit events.
 - Admin onboarding by manual entry or reviewed Excel import, one-time activation,
   invitation resend, self-service password reset by expiring email link, and
   account deletion.
@@ -71,6 +76,16 @@ data handling.
 
 ## Priority 3 — Improve SOP retrieval and operational coverage
 
+- [x] Add an extensible document-management foundation with the initial
+  operational categories, admin-only multi-file uploads, required category
+  metadata, per-file failure reporting, approval review, version-preserving
+  replacements, searchable department-scoped documents, soft deletion and
+  restoration, failed-upload recovery, batch-default categories and departments
+  with per-file overrides, automatic/detected SOP IDs, and admin audit search.
+- [ ] Pilot bulk import with a small representative set from each existing
+  category; verify category mapping, metadata quality, extracted text,
+  department visibility, downloads, and replacement history before importing
+  the full library.
 - [ ] Evaluate lexical search with representative questions from each
   department; record expected source sections and acceptable results.
 - [ ] Improve retrieval based on evaluation results. Consider embeddings/vector

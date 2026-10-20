@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import logging
 import os
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -8,6 +9,8 @@ from urllib.request import Request, urlopen
 
 from openai import OpenAI, OpenAIError
 
+
+LOGGER = logging.getLogger(__name__)
 
 MISSING_ANSWER = (
     "I could not find this in the approved SOP repository. Please ask your "
@@ -95,11 +98,95 @@ class OpenAIAnswerProvider:
                 store=False,
             )
         except OpenAIError as exc:
+            LOGGER.warning(
+                "OpenAI request failed: error_type=%s status_code=%s error_code=%s request_id=%s",
+                type(exc).__name__,
+                getattr(exc, "status_code", None),
+                getattr(exc, "code", None),
+                getattr(exc, "request_id", None),
+            )
             raise AnswerProviderError("The answer service is temporarily unavailable.") from exc
         except (TimeoutError, OSError) as exc:
             raise AnswerProviderError("The answer service is temporarily unavailable.") from exc
 
         answer = response.output_text.strip()
+        if not answer:
+            raise AnswerProviderError("The answer service returned an empty response.")
+        return answer
+
+
+class OpenRouterAnswerProvider:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str = "openrouter/free",
+        client: Any | None = None,
+    ) -> None:
+        if not api_key.strip():
+            raise AnswerProviderError(
+                "OpenRouter is selected but OPENROUTER_API_KEY is not set."
+            )
+        if not model.strip():
+            raise AnswerProviderError("FOODIES_OPENROUTER_MODEL must not be blank.")
+        self.model = model.strip()
+        self.client = client or OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            timeout=30.0,
+            max_retries=1,
+        )
+
+    def generate(
+        self,
+        question: str,
+        sources: list[dict[str, Any]],
+    ) -> str:
+        safe_sources = [
+            {
+                "sop_id": str(source["sop_id"])[:100],
+                "title": str(source["title"])[:300],
+                "department": str(source["department"])[:100],
+                "version": str(source["version"])[:50],
+                "section": str(source["section_heading"])[:300],
+                "approved_excerpt": str(source["section_text"])[:8000],
+            }
+            for source in sources[:3]
+        ]
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": OPENAI_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {"question": question[:2000], "sources": safe_sources},
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                max_tokens=350,
+                temperature=0.1,
+            )
+        except OpenAIError as exc:
+            LOGGER.warning(
+                "OpenRouter request failed: error_type=%s status_code=%s error_code=%s request_id=%s",
+                type(exc).__name__,
+                getattr(exc, "status_code", None),
+                getattr(exc, "code", None),
+                getattr(exc, "request_id", None),
+            )
+            raise AnswerProviderError("The answer service is temporarily unavailable.") from exc
+        except (TimeoutError, OSError) as exc:
+            raise AnswerProviderError("The answer service is temporarily unavailable.") from exc
+
+        choices = getattr(response, "choices", None)
+        answer = (
+            choices[0].message.content.strip()
+            if choices and choices[0].message.content
+            else ""
+        )
         if not answer:
             raise AnswerProviderError("The answer service returned an empty response.")
         return answer
@@ -233,8 +320,14 @@ def configured_answer_provider() -> AnswerProvider:
             api_key=os.getenv("OPENAI_API_KEY", ""),
             model=os.getenv("FOODIES_OPENAI_MODEL", "gpt-4.1-mini"),
         )
+    if provider == "openrouter":
+        return OpenRouterAnswerProvider(
+            api_key=os.getenv("OPENROUTER_API_KEY", ""),
+            model=os.getenv("FOODIES_OPENROUTER_MODEL", "openrouter/free"),
+        )
     raise AnswerProviderError(
-        "FOODIES_LLM_PROVIDER must be 'extractive', 'ollama', or 'openai'."
+        "FOODIES_LLM_PROVIDER must be 'extractive', 'ollama', 'openai', or "
+        "'openrouter'."
     )
 
 

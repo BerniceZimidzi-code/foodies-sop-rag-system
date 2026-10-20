@@ -108,15 +108,93 @@ Markdown headings define the cited sections. Changes to approved documents are
 picked up on the next request; there is no separate vector-index refresh step in
 this MVP.
 
+## Document management
+
+The administration panel includes data-driven document categories, bulk upload,
+document search, review, replacement, soft deletion, failed-upload recovery, and
+document activity history. The initial categories are seeded on first database
+initialization; administrators can add, rename, archive, and restore categories.
+Category IDs, rather than folder names, are stored with uploaded documents, so
+the category list can grow without code changes.
+
+Bulk upload accepts up to 30 `.md`, selectable-text `.pdf`, or `.docx` files per
+batch, with a 15 MB per-file and 100 MB batch limit. Batch-wide category and
+department defaults can be selected and overridden per file. Each file requires
+a title, category, type, department, owner, version, and effective date.
+Comma-separated search tags are optional keywords that help staff find relevant
+documents. SOPs are branch-wide, so branch/location metadata is not collected or
+used for filtering. SOP IDs are optional: a blank ID is detected from an ID field
+in the document or a matching SOP filename when possible, otherwise the system
+allocates a stable `FD-SOP-000001`-style ID. An
+administrator can enter an ID to override detection; the final ID is shown in
+the per-file upload results.
+Uploads with invalid metadata, duplicate contents or versions, unsupported
+formats, extraction failures, or a batch-size violation are reported for each
+file with plain-language guidance. Results distinguish uploaded documents,
+duplicates, and files that need attention. Exact duplicate content is not added
+to the retry queue; it is identified as already present in the library.
+Recoverable failures retain their source file under `data/uploads/failed/` and
+are visible to admins for correction and retry. Files rejected before they can
+be retained can be retried by selecting a replacement file. Files over the
+per-document limit are reported but cannot be retained by the application.
+Detailed diagnostics remain in protected server-side records and are not
+returned by the failed-upload list API.
+
+All uploaded versions start in `pending_review`. Assign a category before
+approval; a pending item without a category cannot be published. Replacing a
+document creates a new version and leaves the current approved version available
+until the replacement is approved. Admins can edit metadata, archive documents,
+soft-delete and restore them, or permanently remove soft-deleted file content
+after a two-step confirmation. Audit metadata remains after permanent removal.
+In the catalogue, **Edit metadata** changes the document details and search tags;
+**Archive** hides an approved document from staff while retaining its history;
+**Delete** moves it to the restorable Deleted state; **Replace with new version**
+uploads a draft replacement that must be approved before it becomes active.
+
+Staff and managers can search/download only effective, approved documents for
+their own department. Admins can search all departments and manage all
+documents. Important actions, including upload, failed upload, metadata changes,
+category moves, review, archive, download, delete, restore, and purge, are kept
+in an admin-searchable audit table with no ordinary-user edit/delete endpoint.
+Account invitations, activation, deactivation, restoration, and deletion are
+also audited because they change who can access department-scoped documents.
+Database backups must include the uploaded originals as well as SQLite; source
+documents already under `data/sops/approved/` remain Git-managed and
+read-only through the document catalogue.
+
 ## API
 
 - `POST /api/auth/login` — exchange email/password for a 30-minute bearer token.
 - `GET /api/auth/me` — return the authenticated account.
 - `POST /api/query` — retrieve approved sections and write an audit event.
 - `GET /api/departments`, `GET /api/sops` — list content visible to the caller.
+- `GET /api/document-categories`, `GET /api/documents` — list active categories
+  and search effective approved documents within the caller's department.
+- `GET /api/documents/{document_id}/download` — download an approved document
+  available to the caller; downloads are audited.
 - `GET/POST /api/admin/users` — list users or create one and email its
   activation invitation.
 - `GET /api/admin/email-status` — report whether SMTP settings are present.
+- `GET/POST/PATCH /api/admin/document-categories` — list, add, or rename
+  categories; category archive/restore actions are admin-only.
+- `POST /api/admin/documents/bulk-upload` — upload up to 30 files and receive
+  per-file uploaded, duplicate, unsupported, or failed outcomes; SOP IDs may be
+  omitted to use document detection or automatic ID generation, and selected
+  default category/department values can be overridden for individual files.
+- `GET /api/admin/sops` — search/filter document versions and, for admins, view
+  soft-deleted versions with `include_deleted=true`.
+- `PATCH/DELETE /api/admin/documents/{document_id}` — edit metadata or
+  soft-delete a version; restore and separately confirmed permanent removal are
+  available through the corresponding admin endpoints.
+- `POST /api/admin/documents/{document_id}/replace` — upload a replacement as
+  a new version for review; the current approved version remains available
+  until approval.
+- `GET /api/admin/document-upload-failures` — inspect failed batches; retry
+  recoverable files after correcting metadata, select a replacement file when
+  the original cannot be retried, or dismiss the attempt.
+- `POST /api/admin/document-upload-failures/{attempt_id}/replace` — use a new
+  supported file and corrected metadata to recover a failed upload.
+- `GET /api/admin/document-audit` — search document-management audit records.
 - `POST /api/admin/users/preview` — validate an uploaded `.xlsx` workbook.
 - `POST /api/admin/users/bulk` — create and invite the reviewed valid rows.
 - `POST /api/admin/users/{user_id}/activation` — rotate and resend an unused
@@ -253,6 +331,27 @@ OpenAI's current data controls and your organization's policy before sending
 internal SOP content to any external service. If the provider fails, the app
 returns a service-unavailable error rather than substituting an ungrounded
 answer.
+
+### Use OpenRouter free models
+
+Create an API key in your [OpenRouter account](https://openrouter.ai/), then
+select OpenRouter in the ignored local `.env` file:
+
+```dotenv
+FOODIES_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-openrouter-api-key
+FOODIES_OPENROUTER_MODEL=openrouter/free
+```
+
+The app uses OpenRouter's OpenAI-compatible chat completions API. The
+`openrouter/free` model router selects an available free model; the particular
+model can change, and free models may be slower, unavailable, or have usage
+limits. Check OpenRouter's current [free model limits](https://openrouter.ai/docs/faq#how-are-rate-limits-calculated)
+and [model catalog](https://openrouter.ai/models?max_price=0) before testing.
+Do not commit or share the key. Restart Uvicorn after changing `.env`. As with
+any hosted provider, review your organization's data policy before sending
+internal SOP excerpts; only the question and up to three retrieved excerpts are
+sent. Citations remain generated by the app.
 
 ### Run a local free model with Ollama
 
