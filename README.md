@@ -81,6 +81,30 @@ database as well as the SOP Git repository. The JWT secret must be stable across
 restarts and at least 32 characters; store it in a secret manager in deployed
 environments, not in source control.
 
+### Bootstrap the first administrator on Render Free
+
+The app can create its first admin at startup when all four
+`FOODIES_BOOTSTRAP_ADMIN_*` environment variables are set. It only creates the
+account when the database contains no users; it never changes an existing
+account's password. Configure these values in the Render service's Environment
+settings, not in GitHub:
+
+| Variable | Value |
+| --- | --- |
+| `FOODIES_BOOTSTRAP_ADMIN_EMAIL` | The admin's sign-in email address |
+| `FOODIES_BOOTSTRAP_ADMIN_NAME` | The admin's display name |
+| `FOODIES_BOOTSTRAP_ADMIN_DEPARTMENT` | For example, `All` |
+| `FOODIES_BOOTSTRAP_ADMIN_PASSWORD` | A unique password of 12-256 characters; treat it as a secret |
+
+Save the variables and redeploy, then sign in using the email and password you
+configured. In the Render logs, confirm startup reports that the initial
+administrator account was created; the password is never logged. Keep the four
+values configured on Render Free if you want the account to be recreated after
+the service's temporary filesystem resets. This is for preview/testing only:
+the SQLite database and uploaded files can still be lost, and the bootstrap
+password remains a Render secret. Do not use this as a production persistence
+or backup solution.
+
 ## SOP metadata and lifecycle
 
 Store only currently approved documents under `data/sops/approved/`. A document

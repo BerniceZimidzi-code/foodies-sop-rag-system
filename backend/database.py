@@ -322,6 +322,36 @@ def create_user(
     return user_id
 
 
+def create_initial_admin(
+    *,
+    email: str,
+    name: str,
+    department: str,
+    password_hash: str,
+) -> bool:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if connection.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+            return False
+        connection.execute(
+            """
+            INSERT INTO users
+                (id, email, name, department, role, password_hash, is_active,
+                 must_change_password, created_at)
+            VALUES (?, ?, ?, ?, 'admin', ?, 1, 0, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                email.strip().lower(),
+                name.strip(),
+                department.strip(),
+                password_hash,
+                _now(),
+            ),
+        )
+    return True
+
+
 def list_document_categories(*, include_archived: bool = False) -> list[dict[str, Any]]:
     where_clause = "" if include_archived else "WHERE is_active = 1"
     with connect() as connection:

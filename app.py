@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 from typing import Annotated, Any, Literal
@@ -37,6 +38,7 @@ from backend.database import (
     create_user,
     change_user_password,
     clear_password_reset_credentials,
+    create_initial_admin,
     consume_password_reset,
     delete_user,
     dismiss_failed_document_upload,
@@ -112,6 +114,7 @@ MAX_DOCUMENT_BATCH_BYTES = 100 * 1024 * 1024
 async def lifespan(_: FastAPI):
     get_jwt_secret()
     initialize_database()
+    bootstrap_initial_admin()
     yield
 
 
@@ -343,6 +346,46 @@ def normalize_email(value: str) -> str:
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
         raise ValueError("Enter a valid email address.")
     return normalized
+
+
+def bootstrap_initial_admin() -> None:
+    email = os.getenv("FOODIES_BOOTSTRAP_ADMIN_EMAIL", "").strip()
+    name = os.getenv("FOODIES_BOOTSTRAP_ADMIN_NAME", "").strip()
+    department = os.getenv("FOODIES_BOOTSTRAP_ADMIN_DEPARTMENT", "").strip()
+    password = os.getenv("FOODIES_BOOTSTRAP_ADMIN_PASSWORD", "")
+    values = (email, name, department, password)
+    if not any(values):
+        return
+    if not all(values):
+        raise RuntimeError(
+            "Set all four FOODIES_BOOTSTRAP_ADMIN_* variables or leave all of them blank."
+        )
+    if len(password) < 12 or len(password) > 256:
+        raise RuntimeError(
+            "FOODIES_BOOTSTRAP_ADMIN_PASSWORD must be between 12 and 256 characters."
+        )
+    try:
+        admin = CreateUserRequest(
+            email=email,
+            name=name,
+            department=department,
+            role="admin",
+        )
+    except ValidationError as exc:
+        raise RuntimeError(
+            "FOODIES_BOOTSTRAP_ADMIN_EMAIL, NAME, and DEPARTMENT must be valid."
+        ) from exc
+
+    created = create_initial_admin(
+        email=admin.email,
+        name=admin.name,
+        department=admin.department,
+        password_hash=hash_password(password),
+    )
+    if created:
+        LOGGER.warning("Created the initial administrator account: %s", admin.email)
+    else:
+        LOGGER.info("Initial administrator bootstrap skipped; user accounts already exist.")
 
 
 class ActiveStatusRequest(BaseModel):

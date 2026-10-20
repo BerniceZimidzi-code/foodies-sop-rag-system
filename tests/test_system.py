@@ -25,7 +25,7 @@ from backend.answering import (
 )
 from backend.auth import hash_password, verify_password
 from backend.mailer import EmailDeliveryError
-from app import app
+from app import app, bootstrap_initial_admin
 
 
 class FoodiesSystemTests(unittest.TestCase):
@@ -144,6 +144,43 @@ class FoodiesSystemTests(unittest.TestCase):
         self.sop_directory_patch.stop()
         self.database_path_patch.stop()
         self.temp_directory.cleanup()
+
+    def test_render_bootstrap_creates_admin_only_when_database_is_empty(self):
+        bootstrap_values = {
+            "FOODIES_BOOTSTRAP_ADMIN_EMAIL": "render-admin@example.com",
+            "FOODIES_BOOTSTRAP_ADMIN_NAME": "Render Admin",
+            "FOODIES_BOOTSTRAP_ADMIN_DEPARTMENT": "All",
+            "FOODIES_BOOTSTRAP_ADMIN_PASSWORD": "strong-test-password",
+        }
+        empty_database = Path(self.temp_directory.name) / "bootstrap.sqlite3"
+        with (
+            patch("backend.database.DATABASE_PATH", empty_database),
+            patch.dict(os.environ, bootstrap_values),
+        ):
+            database.initialize_database()
+            bootstrap_initial_admin()
+            admin = database.get_user_by_email("render-admin@example.com")
+            self.assertIsNotNone(admin)
+            self.assertEqual(admin["role"], "admin")
+            self.assertEqual(admin["password_hash"], "strong-test-password")
+
+            os.environ["FOODIES_BOOTSTRAP_ADMIN_PASSWORD"] = "replacement-password"
+            bootstrap_initial_admin()
+            unchanged_admin = database.get_user_by_email("render-admin@example.com")
+            self.assertEqual(unchanged_admin["password_hash"], "strong-test-password")
+
+    def test_render_bootstrap_rejects_partial_configuration(self):
+        with patch.dict(
+            os.environ,
+            {
+                "FOODIES_BOOTSTRAP_ADMIN_EMAIL": "render-admin@example.com",
+                "FOODIES_BOOTSTRAP_ADMIN_NAME": "",
+                "FOODIES_BOOTSTRAP_ADMIN_DEPARTMENT": "",
+                "FOODIES_BOOTSTRAP_ADMIN_PASSWORD": "",
+            },
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Set all four"):
+                bootstrap_initial_admin()
 
     def test_homepage_renders_and_api_requires_authentication(self):
         self.assertEqual(self.client.get("/").status_code, 200)
