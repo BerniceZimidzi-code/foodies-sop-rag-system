@@ -76,10 +76,22 @@ Open <http://127.0.0.1:8127> and sign in. Use the administration panel to
 create staff and manager accounts; each worker receives an invitation link and
 sets their own password. The CLI is for bootstrapping administrator accounts.
 
-Set `FOODIES_DATABASE_PATH` to use a different SQLite database file. Back up the
-database as well as the SOP Git repository. The JWT secret must be stable across
-restarts and at least 32 characters; store it in a secret manager in deployed
-environments, not in source control.
+By default the app uses SQLite at `data/foodies.sqlite3`. Set
+`FOODIES_DATABASE_URL` to a PostgreSQL connection URL to use PostgreSQL instead;
+the application creates and updates its tables at startup. Leave it blank for
+local SQLite development. Existing SQLite data is not copied automatically:
+back up the database and plan a separate data and uploaded-file migration before
+switching an environment that contains records. The JWT secret must be stable
+across restarts and at least 32 characters; store it in a secret manager in
+deployed environments, not in source control.
+
+PostgreSQL connections use Psycopg 3. For Neon, use the connection URL provided
+by Neon, keep SSL enabled, and store the URL only in the ignored local `.env`
+or the hosting provider's secret environment settings. Local and deployed
+environments should use separate development and production databases.
+PostgreSQL support does not enable vector search: retrieval remains lexical
+until an embedding model and pgvector indexing workflow are implemented and
+evaluated.
 
 ### Bootstrap the first administrator on Render Free
 

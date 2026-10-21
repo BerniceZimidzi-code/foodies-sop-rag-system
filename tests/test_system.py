@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs
 
@@ -35,6 +35,7 @@ class FoodiesSystemTests(unittest.TestCase):
         self.database_path_patch = patch(
             "backend.database.DATABASE_PATH", root / "foodies.sqlite3"
         )
+        self.database_url_patch = patch("backend.database.DATABASE_URL", "")
         self.sop_directory_patch = patch(
             "backend.sops.SOP_DIR", root / "sops" / "approved"
         )
@@ -42,6 +43,7 @@ class FoodiesSystemTests(unittest.TestCase):
         self.database_root_patch = patch("backend.database.APP_ROOT", root)
         self.upload_dir_patch = patch("backend.ingestion.UPLOAD_DIR", root / "uploads")
         self.database_path_patch.start()
+        self.database_url_patch.start()
         self.sop_directory = self.sop_directory_patch.start()
         self.app_root_patch.start()
         self.database_root_patch.start()
@@ -143,7 +145,32 @@ class FoodiesSystemTests(unittest.TestCase):
         self.upload_dir_patch.stop()
         self.sop_directory_patch.stop()
         self.database_path_patch.stop()
+        self.database_url_patch.stop()
         self.temp_directory.cleanup()
+
+    def test_postgres_database_connection_uses_configured_url_and_sql_adapter(self):
+        raw_connection = MagicMock()
+        with (
+            patch("backend.database.DATABASE_URL", "postgresql://test.invalid/db"),
+            patch(
+                "backend.database.psycopg.connect",
+                return_value=raw_connection,
+            ) as connect_mock,
+        ):
+            with database.connect() as connection:
+                connection.execute(
+                    "SELECT * FROM items WHERE name LIKE ? COLLATE NOCASE",
+                    ("%procedure%",),
+                )
+            connect_mock.assert_called_once_with(
+                "postgresql://test.invalid/db",
+                row_factory=database.dict_row,
+            )
+            raw_connection.execute.assert_called_once_with(
+                "SELECT * FROM items WHERE name ILIKE %s",
+                ("%procedure%",),
+            )
+            raw_connection.close.assert_called_once()
 
     def test_render_bootstrap_creates_admin_only_when_database_is_empty(self):
         bootstrap_values = {

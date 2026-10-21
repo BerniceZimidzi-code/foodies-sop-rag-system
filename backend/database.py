@@ -8,15 +8,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
+import psycopg
+from psycopg.rows import dict_row
+
 
 APP_ROOT = Path(__file__).resolve().parent.parent
+DATABASE_URL = os.getenv("FOODIES_DATABASE_URL", "").strip()
 DATABASE_PATH = Path(
     os.getenv("FOODIES_DATABASE_PATH", str(APP_ROOT / "data" / "foodies.sqlite3"))
 )
 
 
 @contextmanager
-def connect() -> Generator[sqlite3.Connection, None, None]:
+def connect() -> Generator[Any, None, None]:
+    if DATABASE_URL:
+        connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        try:
+            with connection:
+                yield PostgresConnection(connection)
+        finally:
+            connection.close()
+        return
+
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DATABASE_PATH, timeout=10)
     connection.row_factory = sqlite3.Row
@@ -28,13 +41,69 @@ def connect() -> Generator[sqlite3.Connection, None, None]:
         connection.close()
 
 
+class PostgresConnection:
+    def __init__(self, connection: psycopg.Connection) -> None:
+        self._connection = connection
+
+    def execute(self, sql: str, parameters: Any = ()) -> Any:
+        statement = sql.replace("?", "%s")
+        statement = re.sub(r"\s+COLLATE NOCASE\b", "", statement, flags=re.IGNORECASE)
+        statement = re.sub(r"\bLIKE\b", "ILIKE", statement, flags=re.IGNORECASE)
+        return self._connection.execute(statement, parameters)
+
+    def executescript(self, script: str) -> None:
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+
+    def executemany(self, sql: str, parameter_rows: Any) -> Any:
+        statement = sql.replace("?", "%s")
+        statement = re.sub(r"\s+COLLATE NOCASE\b", "", statement, flags=re.IGNORECASE)
+        statement = re.sub(r"\bLIKE\b", "ILIKE", statement, flags=re.IGNORECASE)
+        return self._connection.cursor().executemany(statement, parameter_rows)
+
+
+def _table_columns(connection: Any, table_name: str) -> set[str]:
+    if DATABASE_URL:
+        rows = connection.execute(
+            """
+            SELECT column_name AS name FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = ?
+            """,
+            (table_name,),
+        ).fetchall()
+    else:
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def _begin_write_transaction(connection: Any, lock_name: str) -> None:
+    if DATABASE_URL:
+        connection.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (lock_name,))
+    else:
+        connection.execute("BEGIN IMMEDIATE")
+
+
+def _is_unique_violation(error: Exception, key: str) -> bool:
+    message = str(error).casefold()
+    if key.casefold() in message:
+        return True
+    diagnostic = getattr(error, "diag", None)
+    constraint_name = getattr(diagnostic, "constraint_name", "") or ""
+    normalized_key = key.casefold().replace(".", "_")
+    return normalized_key in constraint_name.casefold() or (
+        key == "document_categories.name"
+        and "idx_document_categories_name_lower" in message
+    )
+
+
 def initialize_database() -> None:
     with connect() as connection:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                email TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 department TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('staff', 'manager', 'admin')),
@@ -67,6 +136,8 @@ def initialize_database() -> None:
                 ON audit_logs (created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id
                 ON audit_logs (user_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
+                ON users (LOWER(email));
 
             CREATE TABLE IF NOT EXISTS sops (
                 id TEXT PRIMARY KEY,
@@ -105,7 +176,7 @@ def initialize_database() -> None:
 
             CREATE TABLE IF NOT EXISTS document_categories (
                 id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                name TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
                 created_by TEXT NOT NULL,
@@ -128,6 +199,8 @@ def initialize_database() -> None:
                 ON document_audit_events (created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_document_audit_document
                 ON document_audit_events (document_id, created_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_document_categories_name_lower
+                ON document_categories (LOWER(name));
 
             CREATE TABLE IF NOT EXISTS failed_document_uploads (
                 id TEXT PRIMARY KEY,
@@ -173,9 +246,7 @@ def initialize_database() -> None:
                 ON sop_events (sop_version_id, created_at DESC);
             """
         )
-        user_columns = {
-            row["name"] for row in connection.execute("PRAGMA table_info(users)")
-        }
+        user_columns = _table_columns(connection, "users")
         if "must_change_password" not in user_columns:
             connection.execute(
                 """
@@ -198,18 +269,13 @@ def initialize_database() -> None:
             connection.execute("ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT")
         if "password_reset_requested_at" not in user_columns:
             connection.execute("ALTER TABLE users ADD COLUMN password_reset_requested_at TEXT")
-        failed_upload_columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(failed_document_uploads)")
-        }
+        failed_upload_columns = _table_columns(connection, "failed_document_uploads")
         if "user_message" not in failed_upload_columns:
             connection.execute(
                 "ALTER TABLE failed_document_uploads "
                 "ADD COLUMN user_message TEXT NOT NULL DEFAULT ''"
             )
-        sop_columns = {
-            row["name"] for row in connection.execute("PRAGMA table_info(sops)")
-        }
+        sop_columns = _table_columns(connection, "sops")
         existing_sops_need_category_migration = "category_id" not in sop_columns
         sop_migrations = {
             "category_id": "TEXT",
@@ -248,9 +314,10 @@ def initialize_database() -> None:
             category_id = "category-" + _slug(name)
             connection.execute(
                 """
-                INSERT OR IGNORE INTO document_categories
+                INSERT INTO document_categories
                     (id, name, created_by, created_at, updated_at)
                 VALUES (?, ?, 'system', ?, ?)
+                ON CONFLICT DO NOTHING
                 """,
                 (category_id, name, now, now),
             )
@@ -272,7 +339,7 @@ def initialize_database() -> None:
                 connection.execute(
                     """
                     UPDATE sops SET category_id = ?, category_review_required = 0
-                    WHERE category_id IS NULL AND department = ? COLLATE NOCASE
+                    WHERE category_id IS NULL AND LOWER(department) = LOWER(?)
                     """,
                     ("category-" + _slug(category_name), row["department"]),
                 )
@@ -315,8 +382,8 @@ def create_user(
                     _now(),
                 ),
             )
-    except sqlite3.IntegrityError as exc:
-        if "users.email" in str(exc).lower():
+    except (sqlite3.IntegrityError, psycopg.IntegrityError) as exc:
+        if _is_unique_violation(exc, "users.email"):
             raise ValueError("A user with that email already exists.") from exc
         raise
     return user_id
@@ -330,7 +397,7 @@ def create_initial_admin(
     password_hash: str,
 ) -> bool:
     with connect() as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        _begin_write_transaction(connection, "initial-admin-bootstrap")
         if connection.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             return False
         connection.execute(
@@ -394,8 +461,8 @@ def create_document_category(
                 """,
                 (category_id, name, description, actor_id, now, now),
             )
-    except sqlite3.IntegrityError as exc:
-        if "document_categories.name" in str(exc).lower():
+    except (sqlite3.IntegrityError, psycopg.IntegrityError) as exc:
+        if _is_unique_violation(exc, "document_categories.name"):
             raise ValueError("A category with that name already exists.") from exc
         raise
     record_document_event(
@@ -425,8 +492,8 @@ def update_document_category(
                 "UPDATE document_categories SET name = ?, description = ?, updated_at = ? WHERE id = ?",
                 (name, description, _now(), category_id),
             )
-    except sqlite3.IntegrityError as exc:
-        if "document_categories.name" in str(exc).lower():
+    except (sqlite3.IntegrityError, psycopg.IntegrityError) as exc:
+        if _is_unique_violation(exc, "document_categories.name"):
             raise ValueError("A category with that name already exists.") from exc
         raise
     record_document_event(
@@ -528,7 +595,7 @@ def list_document_audit_events(
             LEFT JOIN sops s ON s.id = e.document_id
             LEFT JOIN document_categories c ON c.id = e.category_id
             {where_clause}
-            ORDER BY e.created_at DESC, e.rowid DESC
+            ORDER BY e.created_at DESC, e.id DESC
             LIMIT ?
             """,
             parameters,
@@ -587,7 +654,7 @@ def list_failed_document_uploads() -> list[dict[str, Any]]:
                    uploaded_by, created_at, storage_path
             FROM failed_document_uploads
             WHERE resolved_at IS NULL
-            ORDER BY created_at DESC, rowid DESC
+            ORDER BY created_at DESC, id DESC
             """
         ).fetchall()
     failures = []
@@ -933,11 +1000,11 @@ def delete_user(user_id: str) -> bool:
         if target["role"] == "admin":
             remaining_admins = connection.execute(
                 """
-                SELECT COUNT(*) FROM users
+                SELECT COUNT(*) AS count FROM users
                 WHERE role = 'admin' AND is_active = 1 AND id != ?
                 """,
                 (user_id,),
-            ).fetchone()[0]
+            ).fetchone()["count"]
             if remaining_admins == 0:
                 raise ValueError("The last active administrator cannot be deleted.")
         connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -1019,7 +1086,7 @@ def record_audit_log(
 def list_audit_logs(limit: int) -> list[dict[str, Any]]:
     with connect() as connection:
         rows = connection.execute(
-            "SELECT * FROM audit_logs ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            "SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT ?",
             (limit,),
         ).fetchall()
     logs = []
@@ -1128,8 +1195,12 @@ def create_sop_version(
                     _now(),
                 ),
             )
-    except sqlite3.IntegrityError as exc:
-        if "sops.sop_id, sops.version" in str(exc).lower():
+    except (sqlite3.IntegrityError, psycopg.IntegrityError) as exc:
+        if (
+            "sops.sop_id, sops.version" in str(exc).lower()
+            or getattr(getattr(exc, "diag", None), "constraint_name", "")
+            == "sops_sop_id_version_key"
+        ):
             raise ValueError("That SOP ID and version already exist.") from exc
         raise
     return version_id
@@ -1137,7 +1208,7 @@ def create_sop_version(
 
 def next_generated_sop_id() -> str:
     with connect() as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        _begin_write_transaction(connection, "generated-sop-id")
         row = connection.execute(
             "SELECT next_value FROM generated_sop_ids WHERE sequence_name = 'default'"
         ).fetchone()
@@ -1479,23 +1550,21 @@ def list_sop_versions(
         clauses.append("s.status = ?")
         parameters.append(status_filter)
     if department is not None:
-        clauses.append("s.department = ? COLLATE NOCASE")
+        clauses.append("LOWER(s.department) = LOWER(?)")
         parameters.append(department)
     if category_id is not None:
         clauses.append("s.category_id = ?")
         parameters.append(category_id)
     if document_type is not None:
-        clauses.append("s.document_type = ? COLLATE NOCASE")
+        clauses.append("LOWER(s.document_type) = LOWER(?)")
         parameters.append(document_type)
     if tag is not None:
-        clauses.append("s.tags LIKE ? COLLATE NOCASE")
+        clauses.append("s.tags LIKE ?")
         parameters.append(f'%"{tag.strip()}"%')
     if query is not None:
         clauses.append(
-            "(s.title LIKE ? COLLATE NOCASE OR s.sop_id LIKE ? COLLATE NOCASE "
-            "OR s.department LIKE ? COLLATE NOCASE OR s.tags LIKE ? COLLATE NOCASE "
-            "OR s.original_filename LIKE ? COLLATE NOCASE "
-            "OR c.name LIKE ? COLLATE NOCASE)"
+            "(s.title LIKE ? OR s.sop_id LIKE ? OR s.department LIKE ? "
+            "OR s.tags LIKE ? OR s.original_filename LIKE ? OR c.name LIKE ?)"
         )
         wildcard = f"%{query.strip()}%"
         parameters.extend([wildcard] * 6)
@@ -1517,7 +1586,7 @@ def list_sop_versions(
             LEFT JOIN document_categories c ON c.id = s.category_id
             {where_clause}
             ORDER BY CASE WHEN s.deleted_at IS NULL THEN 0 ELSE 1 END,
-                     s.created_at DESC, s.rowid DESC
+                     s.created_at DESC, s.id DESC
             """,
             parameters,
         ).fetchall()
@@ -1701,7 +1770,7 @@ def list_sop_events(version_id: str) -> list[dict[str, Any]]:
             """
             SELECT actor_id, actor_email, action, details, created_at
             FROM sop_events WHERE sop_version_id = ?
-            ORDER BY created_at DESC, rowid DESC
+            ORDER BY created_at DESC, id DESC
             """,
             (version_id,),
         ).fetchall()

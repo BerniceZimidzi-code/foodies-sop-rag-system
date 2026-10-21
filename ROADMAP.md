@@ -5,8 +5,10 @@ a dependable internal SOP assistant. It intentionally does not include secrets.
 
 ## Current state
 
-- FastAPI application with SQLite accounts, department-scoped access, and audit
-  logging.
+- FastAPI application with SQLite local development and a configurable
+  PostgreSQL connection for accounts, department-scoped access, and audit
+  logging. Existing SQLite records and uploaded files still need a planned
+  migration before production cutover.
 - SOP upload, review, approval, versioning, and extractive answers with citations.
 - Admin-managed, database-backed document categories and bulk document
   management with category-aware review, version replacement, soft deletion,
@@ -89,8 +91,9 @@ data handling.
 - [ ] Evaluate lexical search with representative questions from each
   department; record expected source sections and acceptable results.
 - [ ] Improve retrieval based on evaluation results. Consider embeddings/vector
-  search only if lexical search is insufficient; select storage and embedding
-  provider before introducing those dependencies.
+  search only if lexical search is insufficient; select an embedding model and
+  provider before introducing that workflow. PostgreSQL support alone does not
+  enable pgvector retrieval.
 - [ ] Test real Markdown, text-based PDF, and DOCX uploads, metadata validation,
   duplicate versions, approval, archive/rejection, and effective-date behavior.
 - [ ] Review bulk-import edge cases and invitation failure/retry behavior with
@@ -111,6 +114,11 @@ sections with correct department boundaries and current-version citations.
   account lifecycle, administrator access, and password policies.
 - [ ] Move from local SQLite to managed PostgreSQL if required for concurrent
   users, backups, availability, or operations.
+- [x] Add a PostgreSQL connection path using `FOODIES_DATABASE_URL`; initialize
+  application tables at startup while retaining SQLite for local use.
+- [ ] Migrate existing SQLite records and uploaded originals to durable
+  PostgreSQL and file storage, verify row counts and file access, and only then
+  switch the deployed service.
 - [ ] Add encrypted backups and restore testing for the database and SOP files.
 - [ ] Add rate limits, security headers, dependency updates, monitoring, error
   alerts, audit-retention rules, and a deployment/rollback process.
