@@ -92,13 +92,15 @@ data handling.
 - [x] Implement opt-in OpenRouter embeddings and pgvector-assisted retrieval
   for approved uploaded SOP sections, with lexical fallback and an admin reindex
   endpoint.
+- [x] Automatically index newly approved SOP sections, skip sections already
+  indexed by the current model during recovery reindex, and report indexing
+  status to administrators.
 - [ ] Configure the OpenRouter embedding provider and API key in the intended
   deployment, then run the admin-only embedding reindex endpoint.
 - [ ] Evaluate hybrid retrieval with representative questions from each
   department; record expected source sections and compare lexical-only and
   vector-assisted results.
-- [ ] Reindex after approving uploaded documents or changing the embedding
-  model; evaluate future automation for Git-managed SOPs separately.
+- [ ] Evaluate future automated indexing for Git-managed SOPs separately.
 - [ ] Test real Markdown, text-based PDF, and DOCX uploads, metadata validation,
   duplicate versions, approval, archive/rejection, and effective-date behavior.
 - [ ] Review bulk-import edge cases and invitation failure/retry behavior with

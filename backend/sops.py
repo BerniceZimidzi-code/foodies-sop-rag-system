@@ -14,6 +14,7 @@ from backend.embeddings import (
     EMBEDDING_DIMENSIONS,
     EmbeddingProviderError,
     MINIMUM_COSINE_SIMILARITY,
+    OpenRouterEmbeddingProvider,
     configured_embedding_provider,
 )
 
@@ -345,7 +346,55 @@ def reindex_approved_sop_embeddings() -> dict[str, Any]:
             "Set FOODIES_EMBEDDING_PROVIDER=openrouter before indexing embeddings."
         )
 
-    documents = database.list_approved_sop_embedding_sections()
+    indexed_count = _index_approved_embedding_sections(
+        provider,
+        version_id=None,
+    )
+    database.delete_stale_sop_embeddings(provider.model)
+    return {
+        "indexed_sections": indexed_count,
+        "model": provider.model,
+        "dimensions": EMBEDDING_DIMENSIONS,
+    }
+
+
+def index_approved_sop_version_embeddings(version_id: str) -> dict[str, Any]:
+    if not database.DATABASE_URL:
+        return {
+            "status": "skipped",
+            "message": "Vector indexing requires PostgreSQL; the SOP was approved.",
+        }
+    provider = configured_embedding_provider()
+    if provider is None:
+        return {
+            "status": "skipped",
+            "message": (
+                "Embeddings are disabled; the SOP was approved and remains "
+                "available through lexical search."
+            ),
+        }
+
+    indexed_count = _index_approved_embedding_sections(
+        provider,
+        version_id=version_id,
+    )
+    return {
+        "status": "indexed",
+        "indexed_sections": indexed_count,
+        "model": provider.model,
+        "dimensions": EMBEDDING_DIMENSIONS,
+    }
+
+
+def _index_approved_embedding_sections(
+    provider: OpenRouterEmbeddingProvider,
+    *,
+    version_id: str | None,
+) -> int:
+    documents = database.list_approved_sop_embedding_sections(
+        model=provider.model,
+        version_id=version_id,
+    )
     indexed_count = 0
     batch_size = 16
     for start in range(0, len(documents), batch_size):
@@ -372,10 +421,4 @@ def reindex_approved_sop_embeddings() -> dict[str, Any]:
         ]
         database.save_sop_embeddings(records, provider.model)
         indexed_count += len(records)
-
-    database.delete_stale_sop_embeddings(provider.model)
-    return {
-        "indexed_sections": indexed_count,
-        "model": provider.model,
-        "dimensions": EMBEDDING_DIMENSIONS,
-    }
+    return indexed_count

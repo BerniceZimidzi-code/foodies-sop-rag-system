@@ -100,6 +100,7 @@ from backend.mailer import (
 )
 from backend.sops import (
     get_departments,
+    index_approved_sop_version_embeddings,
     load_sops,
     reindex_approved_sop_embeddings,
     retrieve_sops,
@@ -2359,7 +2360,23 @@ def admin_review_sop(
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SOP version not found.")
     updated.pop("location", None)
-    return {"sop": updated, "events": list_sop_events(version_id)}
+    result = {"sop": updated, "events": list_sop_events(version_id)}
+    if action == "approve":
+        try:
+            result["embedding_index"] = index_approved_sop_version_embeddings(version_id)
+        except (EmbeddingProviderError, psycopg.Error) as exc:
+            LOGGER.exception(
+                "SOP approved but embedding indexing failed: version_id=%s",
+                version_id,
+            )
+            result["embedding_index"] = {
+                "status": "failed",
+                "message": (
+                    "The SOP was approved, but automatic semantic indexing failed. "
+                    "Use the admin reindex request to retry."
+                ),
+            }
+    return result
 
 
 @app.post("/api/admin/embeddings/reindex")

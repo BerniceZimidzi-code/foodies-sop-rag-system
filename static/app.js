@@ -1333,12 +1333,18 @@ async function reviewSop(sop, action, button) {
   body.set('action', action);
   body.set('review_note', reviewNote);
   try {
-    await apiFetch(`/api/admin/sops/${encodeURIComponent(sop.id)}/review`, {
+    const response = await apiFetch(`/api/admin/sops/${encodeURIComponent(sop.id)}/review`, {
       method: 'POST',
       body,
     });
     const result = action === 'approve' ? 'approved' : 'rejected';
-    setSopUploadMessage(`${sop.sop_id} ${result} successfully.`);
+    const index = response.embedding_index;
+    const indexMessage = action === 'approve' && index
+      ? index.status === 'indexed'
+        ? ` Semantic search indexed ${index.indexed_sections} sections.`
+        : ` ${index.message}`
+      : '';
+    setSopUploadMessage(`${sop.sop_id} ${result} successfully.${indexMessage}`);
     await loadSops();
   } catch (error) {
     setSopUploadMessage(error.message, true);
@@ -1529,10 +1535,17 @@ async function reviewDocument(documentRecord, action) {
   const body = new FormData();
   body.set('action', action);
   try {
-    await apiFetch(`/api/admin/sops/${encodeURIComponent(documentRecord.id)}/review`, {
+    const response = await apiFetch(`/api/admin/sops/${encodeURIComponent(documentRecord.id)}/review`, {
       method: 'POST',
       body,
     });
+    if (action === 'approve' && response.embedding_index) {
+      const index = response.embedding_index;
+      const indexMessage = index.status === 'indexed'
+        ? `Semantic search indexed ${index.indexed_sections} sections.`
+        : index.message;
+      window.alert(`${documentRecord.sop_id} approved. ${indexMessage}`);
+    }
     await Promise.all([loadDocumentCatalog(), loadSops(), loadApprovedSops()]);
   } catch (error) {
     window.alert(error.message);

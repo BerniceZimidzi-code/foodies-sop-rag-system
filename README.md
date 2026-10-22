@@ -98,8 +98,10 @@ configure `OPENROUTER_API_KEY` in the deployment environment. Embeddings use
 `FOODIES_OPENROUTER_EMBEDDING_API_KEY` when set, otherwise they reuse
 `OPENROUTER_API_KEY`; only add the separate variable if you want a distinct key.
 The application stores vectors only for approved, effective uploaded SOP sections. The
-`/api/admin/embeddings/reindex` endpoint (admin-only) indexes or refreshes them;
-call it after approving documents and after changing the embedding model.
+admin approval action automatically indexes that SOP's sections and reports if
+indexing could not be completed. The admin-only
+`/api/admin/embeddings/reindex` endpoint indexes sections missing for the
+configured model, or refreshes all sections after changing the embedding model.
 Reindexing is not performed during startup. Existing lexical search remains
 available if embeddings are disabled or the embedding provider is unavailable.
 Repository-managed SOPs remain lexical-only. OpenRouter receives the approved
@@ -433,8 +435,10 @@ Invoke-RestMethod -Method Post -Uri "$baseUrl/api/admin/embeddings/reindex" `
     -Headers @{ Authorization = "Bearer $($login.access_token)" }
 ```
 
-The response reports the number of sections indexed. Repeat the request after
-approving new uploaded SOPs or changing the embedding model. Queries are
+The response reports the number of sections indexed. Newly approved uploaded
+SOPs are indexed automatically. Use the reindex request to recover from
+provider outages or rebuild after changing the embedding model; sections
+already indexed with the current model are skipped. Queries are
 department-filtered in PostgreSQL before results are returned. Search uses
 exact cosine-distance ordering with an initial minimum cosine similarity of
 0.45, so no approximate vector index is needed for the initial document

@@ -31,7 +31,11 @@ from backend.embeddings import (
     configured_embedding_provider,
 )
 from backend.mailer import EmailDeliveryError
-from backend.sops import reindex_approved_sop_embeddings, retrieve_sops
+from backend.sops import (
+    index_approved_sop_version_embeddings,
+    reindex_approved_sop_embeddings,
+    retrieve_sops,
+)
 from app import app, bootstrap_initial_admin
 
 
@@ -341,6 +345,31 @@ class FoodiesSystemTests(unittest.TestCase):
         self.assertEqual(response.json()["indexed_sections"], 3)
         reindex.assert_called_once_with()
 
+    def test_approved_sections_to_embed_are_limited_to_missing_model_and_version(self):
+        connection = Mock()
+        connection.execute.return_value.fetchall.return_value = []
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+        connection_context.__exit__.return_value = False
+
+        with (
+            patch("backend.database.DATABASE_URL", "postgresql://test"),
+            patch("backend.database.connect", return_value=connection_context),
+        ):
+            database.list_approved_sop_embedding_sections(
+                model="test-model",
+                version_id="version-123",
+            )
+
+        query, parameters = connection.execute.call_args.args
+        self.assertIn("s.status = 'approved'", query)
+        self.assertIn("s.effective_date <= ?", query)
+        self.assertIn("s.id = ?", query)
+        self.assertIn("NOT EXISTS", query)
+        self.assertIn("e.model = ?", query)
+        self.assertIn("e.content_sha256 = s.content_sha256", query)
+        self.assertEqual(parameters[1:], ["version-123", "test-model"])
+
     def test_sop_library_lists_only_the_users_department(self):
         response = self.client.get(
             "/api/sops",
@@ -555,6 +584,7 @@ class FoodiesSystemTests(unittest.TestCase):
             {
                 "FOODIES_EMBEDDING_PROVIDER": "openrouter",
                 "OPENROUTER_API_KEY": "test-api-key",
+                "FOODIES_OPENROUTER_EMBEDDING_API_KEY": "",
                 "FOODIES_OPENROUTER_EMBEDDING_MODEL": "test-embedding-model",
             },
         ), patch("backend.embeddings.OpenAI") as openai_client:
@@ -626,6 +656,47 @@ class FoodiesSystemTests(unittest.TestCase):
         self.assertEqual(saved_records[0][:2], ("section-1", "content-hash"))
         self.assertTrue(saved_records[0][2].startswith("[0.125,"))
         prune.assert_called_once_with(provider.model)
+
+    def test_automatic_embedding_indexing_targets_one_approved_version(self):
+        document = {
+            "section_id": "section-1",
+            "content_sha256": "content-hash",
+            "title": "Closing Sanitation",
+            "department": "Kitchen",
+            "section_heading": "Sanitation",
+            "section_text": "Sanitize prep surfaces before closing.",
+        }
+        provider = Mock()
+        provider.model = "test-model"
+        provider.embed_texts.return_value = [[0.125] * EMBEDDING_DIMENSIONS]
+        with (
+            patch("backend.sops.database.DATABASE_URL", "postgresql://test"),
+            patch("backend.sops.configured_embedding_provider", return_value=provider),
+            patch(
+                "backend.sops.database.list_approved_sop_embedding_sections",
+                return_value=[document],
+            ) as list_sections,
+            patch("backend.sops.database.save_sop_embeddings") as save,
+        ):
+            result = index_approved_sop_version_embeddings("version-123")
+
+        self.assertEqual(result["status"], "indexed")
+        self.assertEqual(result["indexed_sections"], 1)
+        list_sections.assert_called_once_with(
+            model="test-model",
+            version_id="version-123",
+        )
+        save.assert_called_once()
+
+    def test_automatic_embedding_indexing_reports_disabled_provider(self):
+        with (
+            patch("backend.sops.database.DATABASE_URL", "postgresql://test"),
+            patch("backend.sops.configured_embedding_provider", return_value=None),
+        ):
+            result = index_approved_sop_version_embeddings("version-123")
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("lexical search", result["message"])
 
     def test_openrouter_provider_can_be_selected_from_configuration(self):
         with patch.dict(
@@ -1875,13 +1946,20 @@ class FoodiesSystemTests(unittest.TestCase):
         )
         self.assertTrue(before_review.json()["missing_sop"])
 
-        approval = self.client.post(
-            f"/api/admin/sops/{version_id}/review",
-            headers=self._authorization(self.admin_token),
-            data={"action": "approve", "review_note": "Verified"},
-        )
+        with patch(
+            "app.index_approved_sop_version_embeddings",
+            side_effect=EmbeddingProviderError("The embedding service is temporarily unavailable."),
+        ) as index_version:
+            approval = self.client.post(
+                f"/api/admin/sops/{version_id}/review",
+                headers=self._authorization(self.admin_token),
+                data={"action": "approve", "review_note": "Verified"},
+            )
         self.assertEqual(approval.status_code, 200, approval.text)
         self.assertEqual(approval.json()["sop"]["status"], "approved")
+        self.assertEqual(approval.json()["embedding_index"]["status"], "failed")
+        self.assertIn("approved", approval.json()["embedding_index"]["message"])
+        index_version.assert_called_once_with(version_id)
         self.assertEqual(
             {event["action"] for event in approval.json()["events"]},
             {"upload", "approve"},

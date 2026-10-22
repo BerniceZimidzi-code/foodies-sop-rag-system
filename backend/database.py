@@ -1647,11 +1647,37 @@ def list_approved_sop_sections() -> list[dict[str, Any]]:
     return documents
 
 
-def list_approved_sop_embedding_sections() -> list[dict[str, Any]]:
+def list_approved_sop_embedding_sections(
+    *,
+    model: str | None = None,
+    version_id: str | None = None,
+) -> list[dict[str, Any]]:
     today = datetime.now(timezone.utc).date().isoformat()
+    conditions = [
+        "s.status = 'approved'",
+        "s.effective_date <= ?",
+        "s.deleted_at IS NULL",
+        "s.permanently_deleted = 0",
+    ]
+    parameters: list[Any] = [today]
+    if version_id is not None:
+        conditions.append("s.id = ?")
+        parameters.append(version_id)
+    if model is not None:
+        conditions.append(
+            """
+            NOT EXISTS (
+                SELECT 1 FROM sop_embeddings e
+                WHERE e.section_id = x.id
+                    AND e.model = ?
+                    AND e.content_sha256 = s.content_sha256
+            )
+            """
+        )
+        parameters.append(model)
     with connect() as connection:
         rows = connection.execute(
-            """
+            f"""
             SELECT x.id AS section_id, s.id AS sop_version_id,
                    s.sop_id, s.title, s.department, s.owner, s.version, s.status,
                    s.effective_date, s.approved_by, s.approved_date,
@@ -1659,11 +1685,10 @@ def list_approved_sop_embedding_sections() -> list[dict[str, Any]]:
                    x.heading AS section_heading, x.content AS section_text
             FROM sops s
             JOIN sop_sections x ON x.sop_version_id = s.id
-            WHERE s.status = 'approved' AND s.effective_date <= ?
-                AND s.deleted_at IS NULL AND s.permanently_deleted = 0
+            WHERE {" AND ".join(conditions)}
             ORDER BY s.sop_id, s.effective_date DESC, s.version DESC, x.chunk_index
             """,
-            (today,),
+            parameters,
         ).fetchall()
     documents = []
     for row in rows:
