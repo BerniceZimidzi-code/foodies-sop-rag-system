@@ -1131,7 +1131,6 @@ async def admin_upload_sop(
             detail="Choose an active document category.",
         )
     metadata = {
-        "sop_id": sop_id,
         "title": title,
         "department": department,
         "owner": owner,
@@ -1140,7 +1139,7 @@ async def admin_upload_sop(
         "review_cycle_days": review_cycle_days,
     }
     for key, value in metadata.items():
-        if key == "review_cycle_days":
+        if key == "review_cycle_days" or key == "sop_id":
             continue
         if str(value).strip() == "":
             raise HTTPException(
@@ -1163,9 +1162,14 @@ async def admin_upload_sop(
 
     storage_path = save_original(file.filename or "uploaded-document", content)
     persisted = False
+    resolved_sop_id = sop_id.strip() or _infer_sop_id(
+        file.filename or "uploaded-document",
+        content,
+        sections,
+    ) or next_generated_sop_id()
     try:
         version_id = create_sop_version(
-            sop_id=sop_id.strip(),
+            sop_id=resolved_sop_id,
             title=title.strip(),
             department=department.strip(),
             owner=owner.strip(),
@@ -1191,7 +1195,7 @@ async def admin_upload_sop(
             storage_path.unlink(missing_ok=True)
     return {
         "id": version_id,
-        "sop_id": sop_id.strip(),
+        "sop_id": resolved_sop_id,
         "status": "pending_review",
         "category_review_required": category_id is None,
         "message": "SOP uploaded and queued for review.",

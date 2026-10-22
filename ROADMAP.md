@@ -15,6 +15,9 @@ a dependable internal SOP assistant. It intentionally does not include secrets.
   failed-upload recovery, batch-default category/department values with per-file
   overrides, automatic or document-detected SOP IDs, department-scoped access,
   and document audit events.
+- Administration UI improvements: category folders open a filtered catalogue,
+  metadata edits use an inline form, single-upload SOP IDs are optional, related
+  lists refresh after changes, and approval no longer prompts for confirmation.
 - Admin onboarding by manual entry or reviewed Excel import, one-time activation,
   invitation resend, self-service password reset by expiring email link, and
   account deletion.
@@ -85,6 +88,10 @@ data handling.
   replacements, searchable department-scoped documents, soft deletion and
   restoration, failed-upload recovery, batch-default categories and departments
   with per-file overrides, automatic/detected SOP IDs, and admin audit search.
+- [x] Improve the administration workflow with category-folder browsing,
+  inline metadata editing, optional single-upload SOP IDs, automatic list
+  refreshes after changes, a sticky navigation bar, and direct approval without
+  confirmation prompts.
 - [ ] Pilot bulk import with a small representative set from each existing
   category; verify category mapping, metadata quality, extracted text,
   department visibility, downloads, and replacement history before importing

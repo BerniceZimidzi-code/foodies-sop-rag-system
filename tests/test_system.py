@@ -1982,6 +1982,37 @@ class FoodiesSystemTests(unittest.TestCase):
             {sop["sop_id"] for sop in library.json()["sops"]},
         )
 
+    def test_single_sop_upload_generates_id_when_sop_id_is_omitted(self):
+        kitchen_category = next(
+            category
+            for category in database.list_document_categories()
+            if category["name"] == "Production & Kitchen Operations"
+        )
+        response = self.client.post(
+            "/api/admin/sops/upload",
+            headers=self._authorization(self.admin_token),
+            data={
+                "title": "Nightly Equipment Checks",
+                "department": "Kitchen",
+                "category_id": kitchen_category["id"],
+                "owner": "Kitchen Manager",
+                "version": "1.0",
+                "effective_date": "2024-01-01",
+            },
+            files={
+                "file": (
+                    "nightly-equipment-checks.md",
+                    b"# Nightly Equipment Checks\n\n## Procedure\n\nInspect equipment before closing.",
+                    "text/markdown",
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertRegex(response.json()["sop_id"], r"^FD-SOP-\d{6}$")
+        document = database.get_sop_version(response.json()["id"])
+        self.assertEqual(document["sop_id"], response.json()["sop_id"])
+
     def test_password_hash_is_salted_and_verifies(self):
         with patch("backend.auth.PASSWORD_ITERATIONS", 100_000):
             first_hash = hash_password("correct-password")

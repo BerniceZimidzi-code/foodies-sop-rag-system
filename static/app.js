@@ -35,6 +35,8 @@ const citationsElement = document.getElementById('citations');
 const sourcesEmpty = document.getElementById('sources-empty');
 const sourceCount = document.getElementById('source-count');
 const adminPanel = document.getElementById('admin-panel');
+const mainNavigation = document.getElementById('main-navigation');
+const adminNavigationLink = document.getElementById('admin-navigation-link');
 const createUserForm = document.getElementById('create-user-form');
 const adminMessage = document.getElementById('admin-message');
 const usersList = document.getElementById('users-list');
@@ -81,14 +83,13 @@ const adminShowDeleted = document.getElementById('admin-show-deleted');
 const documentCatalogList = document.getElementById('document-catalog-list');
 const refreshFailedUploadsButton = document.getElementById('refresh-failed-uploads');
 const failedUploadList = document.getElementById('failed-upload-list');
-const documentAuditSearch = document.getElementById('document-audit-search');
-const searchDocumentAuditButton = document.getElementById('search-document-audit');
-const documentAuditList = document.getElementById('document-audit-list');
+const documentFolderMessage = document.getElementById('document-folder-message');
 
 let accessToken = null;
 let currentUser = null;
 let approvedSops = [];
 let documentCategories = [];
+let adminCategories = [];
 let bulkPreviewUsers = [];
 let activationToken = new URLSearchParams(window.location.hash.slice(1)).get('token');
 let credentialLinkMode = window.location.pathname === '/reset-password' ? 'reset' : 'activate';
@@ -131,6 +132,7 @@ function signOut() {
   accessToken = null;
   currentUser = null;
   assistant.classList.add('hidden');
+  mainNavigation.classList.add('hidden');
   logoutButton.classList.add('hidden');
   passwordChangePanel.classList.add('hidden');
   activationPanel.classList.add('hidden');
@@ -169,6 +171,8 @@ async function showSignedIn(user) {
   loginForm.reset();
   loginError.classList.add('hidden');
   assistant.classList.remove('hidden');
+  mainNavigation.classList.remove('hidden');
+  adminNavigationLink.classList.toggle('hidden', user.role !== 'admin');
   logoutButton.classList.remove('hidden');
   profileName.textContent = user.name;
   profileDetail.textContent = `${user.department} · ${user.role}`;
@@ -207,7 +211,6 @@ async function showSignedIn(user) {
     loadAdminCategories();
     loadDocumentCatalog();
     loadFailedUploads();
-    loadDocumentAudit();
   }
   loadApprovedSops();
   questionInput.focus();
@@ -878,12 +881,26 @@ async function loadAuditLogs() {
 
 refreshAuditButton.addEventListener('click', loadAuditLogs);
 
+mainNavigation.addEventListener('click', (event) => {
+  const link = event.target.closest('a[href^="#"]');
+  if (!link) return;
+  const target = document.querySelector(link.getAttribute('href'));
+  if (!target) return;
+  event.preventDefault();
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
 async function loadDocumentCategories() {
   try {
     const { categories } = await apiFetch('/api/document-categories');
     documentCategories = categories;
     populateCategorySelect(libraryCategoryFilter, true);
-    populateCategorySelect(adminDocumentCategory, true);
+    populateCategorySelect(
+      adminDocumentCategory,
+      true,
+      'All categories',
+      adminCategories.length ? adminCategories : documentCategories,
+    );
     populateCategorySelect(sopCategorySelect, false, 'Choose category or flag for review');
     populateCategorySelect(
       documentBulkDefaultCategory,
@@ -897,7 +914,12 @@ async function loadDocumentCategories() {
   }
 }
 
-function populateCategorySelect(select, includeAll, placeholder = 'All categories') {
+function populateCategorySelect(
+  select,
+  includeAll,
+  placeholder = 'All categories',
+  categories = documentCategories,
+) {
   if (!select) return;
   const selected = select.value;
   select.replaceChildren();
@@ -912,7 +934,7 @@ function populateCategorySelect(select, includeAll, placeholder = 'All categorie
     blank.textContent = placeholder;
     select.append(blank);
   }
-  documentCategories.forEach((category) => {
+  categories.forEach((category) => {
     const option = document.createElement('option');
     option.value = category.id;
     option.textContent = category.name;
@@ -926,6 +948,8 @@ function populateCategorySelect(select, includeAll, placeholder = 'All categorie
 async function loadAdminCategories() {
   try {
     const { categories } = await apiFetch('/api/admin/document-categories');
+    adminCategories = categories;
+    populateCategorySelect(adminDocumentCategory, true, 'All categories', adminCategories);
     categoryList.replaceChildren();
     categories.forEach((category) => {
       const row = document.createElement('article');
@@ -939,6 +963,19 @@ async function loadAdminCategories() {
       detail.append(name, description);
       const actions = document.createElement('div');
       actions.className = 'user-actions';
+      const openFolder = document.createElement('button');
+      openFolder.type = 'button';
+      openFolder.className = 'folder-open';
+      openFolder.setAttribute('aria-label', `Open ${category.name} folder`);
+      openFolder.title = `Browse documents in ${category.name}`;
+      const folderIcon = document.createElement('span');
+      folderIcon.setAttribute('aria-hidden', 'true');
+      folderIcon.textContent = '📁';
+      const folderLabel = document.createElement('span');
+      folderLabel.textContent = 'Open folder';
+      openFolder.append(folderIcon, folderLabel);
+      openFolder.addEventListener('click', () => openDocumentFolder(category));
+      actions.append(openFolder);
       const edit = document.createElement('button');
       edit.type = 'button';
       edit.className = 'user-toggle';
@@ -1011,7 +1048,37 @@ categoryCreateForm.addEventListener('submit', async (event) => {
   }
 });
 
+function openDocumentFolder(category) {
+  adminDocumentCategory.value = category.id;
+  adminDocumentStatus.value = '';
+  adminShowDeleted.checked = false;
+  documentFolderMessage.replaceChildren();
+  const label = document.createElement('span');
+  label.textContent = `Browsing ${category.name}`;
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'text-button';
+  clear.textContent = 'Show all documents';
+  clear.addEventListener('click', () => {
+    adminDocumentCategory.value = '';
+    documentFolderMessage.classList.add('hidden');
+    loadDocumentCatalog();
+  });
+  documentFolderMessage.append(label, clear);
+  documentFolderMessage.classList.remove('hidden');
+  loadDocumentCatalog();
+  document.getElementById('document-catalog').scrollIntoView({
+    behavior: 'smooth',
+    block: 'start',
+  });
+}
+
 documentBulkFiles.addEventListener('change', renderBulkMetadataRows);
+documentBulkFiles.addEventListener('change', () => {
+  documentBulkResults.replaceChildren();
+  documentBulkMessage.textContent = '';
+  documentBulkMessage.classList.remove('error');
+});
 documentBulkDefaultCategory.addEventListener('change', () => {
   documentBulkMetadata
     .querySelectorAll('[data-field="category_id"]')
@@ -1174,8 +1241,9 @@ documentBulkSubmit.addEventListener('click', () => {
       loadSops(),
       loadDocumentCatalog(),
       loadFailedUploads(),
-      loadDocumentAudit(),
       loadApprovedSops(),
+      loadAdminCategories(),
+      loadDocumentCategories(),
     ]);
   });
   request.addEventListener('error', () => {
@@ -1214,7 +1282,14 @@ sopUploadForm.addEventListener('submit', async (event) => {
     });
     setSopUploadMessage(`Uploaded ${result.sop_id || 'SOP'} for review.`);
     sopUploadForm.reset();
-    await loadSops();
+    await Promise.all([
+      loadSops(),
+      loadDocumentCatalog(),
+      loadAdminCategories(),
+      loadDocumentCategories(),
+      loadFailedUploads(),
+      loadApprovedSops(),
+    ]);
   } catch (error) {
     setSopUploadMessage(error.message, true);
   } finally {
@@ -1324,14 +1399,8 @@ async function loadSops() {
 
 async function reviewSop(sop, action, button) {
   button.disabled = true;
-  const reviewNote = window.prompt(`Optional review note for ${action}:`);
-  if (reviewNote === null) {
-    button.disabled = false;
-    return;
-  }
   const body = new FormData();
   body.set('action', action);
-  body.set('review_note', reviewNote);
   try {
     const response = await apiFetch(`/api/admin/sops/${encodeURIComponent(sop.id)}/review`, {
       method: 'POST',
@@ -1345,7 +1414,13 @@ async function reviewSop(sop, action, button) {
         : ` ${index.message}`
       : '';
     setSopUploadMessage(`${sop.sop_id} ${result} successfully.${indexMessage}`);
-    await loadSops();
+    await Promise.all([
+      loadSops(),
+      loadDocumentCatalog(),
+      loadAdminCategories(),
+      loadDocumentCategories(),
+      loadApprovedSops(),
+    ]);
   } catch (error) {
     setSopUploadMessage(error.message, true);
     button.disabled = false;
@@ -1409,7 +1484,10 @@ async function loadDocumentCatalog() {
             documentRecord.original_filename,
           )),
           documentActionButton('Replace with new version', () => selectDocumentReplacement(documentRecord)),
-          documentActionButton('Edit metadata', () => editDocumentMetadata(documentRecord)),
+          documentActionButton('Edit metadata', (event) => {
+            editDocumentMetadata(documentRecord, row, event.currentTarget);
+            event.currentTarget.disabled = true;
+          }),
         );
         if (documentRecord.status === 'pending_review' && !documentRecord.category_review_required) {
           actions.append(documentActionButton('Approve', () => reviewDocument(documentRecord, 'approve')));
@@ -1487,51 +1565,122 @@ function selectDocumentReplacement(documentRecord) {
   input.click();
 }
 
-async function editDocumentMetadata(documentRecord) {
-  const categoryChoice = window.prompt(
-    `Category name (${documentCategories.map((category) => category.name).join(', ')}):`,
-    documentRecord.category_name || '',
-  );
-  if (categoryChoice === null) return;
-  const category = documentCategories.find(
-    (item) => item.name.toLocaleLowerCase() === categoryChoice.trim().toLocaleLowerCase(),
-  );
-  if (!category) {
-    window.alert('Enter the exact name of an active category.');
-    return;
-  }
-  const fields = [
-    ['title', 'Document title', documentRecord.title],
-    ['document_type', 'Document type', documentRecord.document_type],
-    ['department', 'Department', documentRecord.department],
-    ['owner', 'Owner', documentRecord.owner],
-    ['effective_date', 'Effective date (YYYY-MM-DD)', documentRecord.effective_date],
-    ['tags', 'Search tags, comma-separated', (documentRecord.tags || []).join(', ')],
+function editDocumentMetadata(documentRecord, row, editButton) {
+  row.querySelector('.document-edit-form')?.remove();
+  const form = document.createElement('form');
+  form.className = 'document-edit-form';
+  form.setAttribute('aria-label', `Edit metadata for ${documentRecord.title}`);
+  const fields = document.createElement('div');
+  fields.className = 'document-edit-fields';
+  const payloadInputs = {};
+  const definitions = [
+    ['title', 'Title', 'text', documentRecord.title],
+    ['document_type', 'Document type', 'text', documentRecord.document_type],
+    ['department', 'Department', 'text', documentRecord.department],
+    ['owner', 'Owner', 'text', documentRecord.owner],
+    ['effective_date', 'Effective date', 'date', documentRecord.effective_date],
+    ['tags', 'Tags (comma-separated)', 'text', (documentRecord.tags || []).join(', ')],
   ];
-  const payload = { category_id: category.id };
-  for (const [key, label, value] of fields) {
-    const answer = window.prompt(`${label}:`, value || '');
-    if (answer === null) return;
-    if (key === 'tags') {
-      payload.tags = answer.split(',').map((tag) => tag.trim()).filter(Boolean);
-    } else {
-      payload[key] = answer.trim();
-    }
-  }
-  try {
-    await apiFetch(`/api/admin/documents/${encodeURIComponent(documentRecord.id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
+  definitions.forEach(([name, labelText, type, value]) => {
+    const field = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    const input = document.createElement('input');
+    input.name = name;
+    input.type = type;
+    input.value = value || '';
+    if (name !== 'tags') input.required = true;
+    if (name === 'title') input.maxLength = 200;
+    if (name === 'document_type') input.maxLength = 80;
+    if (name === 'department') input.maxLength = 100;
+    if (name === 'owner') input.maxLength = 150;
+    label.append(input);
+    field.append(label);
+    fields.append(field);
+    payloadInputs[name] = input;
+  });
+
+  const categoryField = document.createElement('div');
+  const categoryLabel = document.createElement('label');
+  categoryLabel.textContent = 'Category';
+  const categorySelect = document.createElement('select');
+  categorySelect.name = 'category_id';
+  const noCategory = document.createElement('option');
+  noCategory.value = '';
+  noCategory.textContent = 'No category — flag for review';
+  categorySelect.append(noCategory);
+  documentCategories
+    .filter((category) => (
+      category.is_active || category.id === documentRecord.category_id
+    ))
+    .forEach((category) => {
+      const option = document.createElement('option');
+      option.value = category.id;
+      option.textContent = category.is_active
+        ? category.name
+        : `${category.name} (archived)`;
+      categorySelect.append(option);
     });
-    await loadDocumentCatalog();
-    await loadApprovedSops();
-  } catch (error) {
-    window.alert(error.message);
-  }
+  categorySelect.value = documentRecord.category_id || '';
+  categoryLabel.append(categorySelect);
+  categoryField.append(categoryLabel);
+  fields.insertBefore(categoryField, fields.children[1] || null);
+
+  const actions = document.createElement('div');
+  actions.className = 'document-edit-actions';
+  const save = document.createElement('button');
+  save.type = 'submit';
+  save.className = 'button button-primary';
+  save.textContent = 'Save changes';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'button button-quiet';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => {
+    form.remove();
+    editButton.disabled = false;
+  });
+  const message = document.createElement('p');
+  message.className = 'form-message';
+  message.setAttribute('role', 'status');
+  actions.append(save, cancel);
+  form.append(fields, actions, message);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    const payload = {
+      title: payloadInputs.title.value.trim(),
+      document_type: payloadInputs.document_type.value.trim(),
+      department: payloadInputs.department.value.trim(),
+      owner: payloadInputs.owner.value.trim(),
+      effective_date: payloadInputs.effective_date.value,
+      tags: payloadInputs.tags.value.split(',').map((tag) => tag.trim()).filter(Boolean),
+    };
+    if (categorySelect.value !== (documentRecord.category_id || '')) {
+      payload.category_id = categorySelect.value || null;
+    }
+    try {
+      await apiFetch(`/api/admin/documents/${encodeURIComponent(documentRecord.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      form.remove();
+      await Promise.all([loadDocumentCatalog(), loadApprovedSops(), loadAdminCategories()]);
+    } catch (error) {
+      message.textContent = error.message;
+      message.classList.add('error');
+      save.disabled = false;
+    }
+  });
+  row.append(form);
+  payloadInputs.title.focus();
 }
 
 async function reviewDocument(documentRecord, action) {
-  if (!window.confirm(`${action} ${documentRecord.sop_id} · ${documentRecord.title}?`)) return;
+  if (
+    action !== 'approve'
+    && !window.confirm(`${action} ${documentRecord.sop_id} · ${documentRecord.title}?`)
+  ) return;
   const body = new FormData();
   body.set('action', action);
   try {
@@ -1544,9 +1693,15 @@ async function reviewDocument(documentRecord, action) {
       const indexMessage = index.status === 'indexed'
         ? `Semantic search indexed ${index.indexed_sections} sections.`
         : index.message;
-      window.alert(`${documentRecord.sop_id} approved. ${indexMessage}`);
+      setSopUploadMessage(`${documentRecord.sop_id} approved. ${indexMessage}`);
     }
-    await Promise.all([loadDocumentCatalog(), loadSops(), loadApprovedSops()]);
+    await Promise.all([
+      loadDocumentCatalog(),
+      loadSops(),
+      loadApprovedSops(),
+      loadAdminCategories(),
+      loadDocumentCategories(),
+    ]);
   } catch (error) {
     window.alert(error.message);
   }
@@ -1738,42 +1893,8 @@ async function retryFailedUpload(failure, replacementFile = null) {
   }
 }
 
-async function loadDocumentAudit() {
-  const query = documentAuditSearch.value.trim();
-  const parameters = new URLSearchParams({ limit: '100' });
-  if (query) parameters.set('query', query);
-  documentAuditList.replaceChildren();
-  try {
-    const { events } = await apiFetch(`/api/admin/document-audit?${parameters}`);
-    if (!events.length) {
-      const empty = document.createElement('p');
-      empty.className = 'sources-empty';
-      empty.textContent = 'No document activity matches this search.';
-      documentAuditList.append(empty);
-      return;
-    }
-    events.forEach((event) => {
-      const row = document.createElement('article');
-      row.className = 'audit-entry';
-      const heading = document.createElement('strong');
-      heading.textContent = `${event.actor_email} · ${event.action}`;
-      const detail = document.createElement('p');
-      const changes = JSON.stringify(event.details);
-      detail.textContent = `${event.document_title || event.category_name || 'Document management'} · ${event.created_at} · ${changes}`;
-      row.append(heading, detail);
-      documentAuditList.append(row);
-    });
-  } catch (error) {
-    const message = document.createElement('p');
-    message.className = 'sources-empty error';
-    message.textContent = error.message;
-    documentAuditList.append(message);
-  }
-}
-
 refreshDocumentCatalogButton.addEventListener('click', loadDocumentCatalog);
 refreshFailedUploadsButton.addEventListener('click', loadFailedUploads);
-searchDocumentAuditButton.addEventListener('click', loadDocumentAudit);
 adminDocumentSearch.addEventListener('input', loadDocumentCatalog);
 adminDocumentCategory.addEventListener('change', loadDocumentCatalog);
 adminDocumentStatus.addEventListener('change', loadDocumentCatalog);

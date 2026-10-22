@@ -164,10 +164,16 @@ this MVP.
 
 The administration panel includes data-driven document categories, bulk upload,
 document search, review, replacement, soft deletion, failed-upload recovery, and
-document activity history. The initial categories are seeded on first database
-initialization; administrators can add, rename, archive, and restore categories.
-Category IDs, rather than folder names, are stored with uploaded documents, so
-the category list can grow without code changes.
+admin-searchable audit history. Category cards act as folders: opening one filters
+the catalogue to documents in that category, where admins can access the
+available download and management actions. The initial categories are seeded on
+first database initialization; administrators can add, rename, archive, and
+restore categories. Category IDs, rather than folder names, are stored with
+uploaded documents, so the category list can grow without code changes.
+
+The single-file upload accepts a blank SOP ID; the system detects an ID from the
+document or filename when possible and otherwise generates one. Metadata edits
+use the catalogue form, and approval refreshes the affected document views.
 
 Bulk upload accepts up to 30 `.md`, selectable-text `.pdf`, or `.docx` files per
 batch, with a 15 MB per-file and 100 MB batch limit. Batch-wide category and

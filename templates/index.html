@@ -19,6 +19,11 @@
             <span class="brand-caption">TEAM KNOWLEDGE</span>
           </span>
         </a>
+        <nav id="main-navigation" class="main-navigation hidden" aria-label="Main navigation">
+          <a href="#assistant">Ask SOPs</a>
+          <a href="#library-title">SOP library</a>
+          <a id="admin-navigation-link" class="hidden" href="#admin-panel">Administration</a>
+        </nav>
         <div class="header-actions">
           <span class="approval-pill"><span class="status-dot"></span> Approved SOPs only</span>
           <button id="logout" class="button button-quiet hidden" type="button">
@@ -209,7 +214,7 @@
             </div>
             <p id="email-setup-warning" class="form-message email-setup-warning hidden" role="status"></p>
             <div class="admin-grid">
-              <section class="admin-card" aria-labelledby="document-categories-title">
+              <section id="document-categories-section" class="admin-card document-categories-card" aria-labelledby="document-categories-title">
                 <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">▦</span><div><h3 id="document-categories-title">Document categories</h3><p>Manage categories without changing document records.</p></div></div>
                 <form id="category-create-form" class="category-create-form">
                   <label for="category-name">New category</label>
@@ -238,12 +243,13 @@
                 <p id="document-bulk-message" class="form-message" role="status"></p>
                 <ul id="document-bulk-results" class="document-upload-results" aria-live="polite"></ul>
               </section>
-              <section class="admin-card document-catalog-card" aria-labelledby="document-catalog-title">
+              <section id="document-catalog" class="admin-card document-catalog-card" aria-labelledby="document-catalog-title">
                 <div class="audit-heading">
                   <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">▤</span><div><h3 id="document-catalog-title">Document catalogue</h3><p>Search, correct, download, archive, restore, or remove documents.</p></div></div>
                   <button id="refresh-document-catalog" class="button button-quiet" type="button">Refresh</button>
                 </div>
                 <p class="field-hint">Edit metadata changes document details and search tags. Tags are keywords that help staff find SOPs. Archive hides an approved SOP from staff without deleting it; Delete moves it to Deleted, where an admin can restore it. Replace uploads a new version for review while the current approved version stays available.</p>
+                <p id="document-folder-message" class="folder-selection hidden" role="status"></p>
                 <div class="document-filters admin-document-filters">
                   <input id="admin-document-search" type="search" placeholder="Search title, ID, tags, department" />
                   <select id="admin-document-category"><option value="">All categories</option></select>
@@ -264,19 +270,11 @@
                 </div>
                 <div id="failed-upload-list" class="sop-list" aria-live="polite"></div>
               </section>
-              <section class="admin-card document-audit-card" aria-labelledby="document-audit-title">
-                <div class="audit-heading">
-                  <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">≡</span><div><h3 id="document-audit-title">Document activity</h3><p>Search uploads, edits, downloads, reviews, category changes, and deletions.</p></div></div>
-                  <button id="search-document-audit" class="button button-quiet" type="button">Search</button>
-                </div>
-                <input id="document-audit-search" type="search" placeholder="Search actor, action, document, or details" />
-                <div id="document-audit-list" class="audit-list" aria-live="polite"></div>
-              </section>
-              <form id="sop-upload-form" class="admin-card">
-                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">↑</span><div><h3>Upload a procedure</h3><p>Files are extracted and queued for administrator review before they can be searched.</p></div></div>
+              <form id="sop-upload-form" class="admin-card" aria-labelledby="sop-upload-title">
+                <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">↑</span><div><h3 id="sop-upload-title">Upload a procedure</h3><p>Files are extracted and queued for administrator review before they can be searched.</p></div></div>
                 <div class="sop-form-grid">
                   <div><label for="sop-file">SOP document</label><input id="sop-file" name="file" type="file" accept=".md,.pdf,.docx" required /><span class="field-hint">Markdown, text PDF, or Word · max 15 MB</span></div>
-                  <div><label for="sop-id">SOP ID</label><input id="sop-id" name="sop_id" required maxlength="120" placeholder="e.g. SOP-KIT-001" /></div>
+                  <div><label for="sop-id">SOP ID <span class="label-note">optional</span></label><input id="sop-id" name="sop_id" maxlength="120" placeholder="Detected from file or generated if blank" /></div>
                   <div><label for="sop-title">Title</label><input id="sop-title" name="title" required maxlength="200" placeholder="Procedure title" /></div>
                   <div><label for="sop-department">Department</label><input id="sop-department" name="department" required maxlength="100" placeholder="e.g. Kitchen" /></div>
                   <div><label for="sop-category">Category</label><select id="sop-category" name="category_id"><option value="">Choose category or flag for review</option></select></div>
@@ -290,7 +288,7 @@
                 <button id="sop-upload-submit" class="button button-primary" type="submit">Upload for review <span aria-hidden="true">→</span></button>
                 <p id="sop-upload-message" class="form-message" role="status"></p>
               </form>
-              <section class="admin-card sop-review-card" aria-labelledby="sop-review-title">
+              <section id="sop-review" class="admin-card sop-review-card" aria-labelledby="sop-review-title">
                 <div class="audit-heading">
                   <div class="admin-card-title"><span class="admin-icon" aria-hidden="true">▤</span><div><h3 id="sop-review-title">SOP review queue</h3><p>Approve or reject uploaded versions.</p></div></div>
                   <button id="refresh-sops" class="button button-quiet" type="button">Refresh</button>
