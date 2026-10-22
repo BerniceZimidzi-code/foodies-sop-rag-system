@@ -23,8 +23,9 @@ a dependable internal SOP assistant. It intentionally does not include secrets.
   been verified locally.
 - Local activation URLs use port 8128; invitations created before that
   configuration was corrected needed to be resent.
-- Ollama, OpenAI, and extractive answer providers are supported. Retrieval
-  remains lexical. Local Ollama testing and real-model evaluation are next.
+- Ollama, OpenAI, and extractive answer providers are supported. PostgreSQL
+  deployments can use opt-in OpenRouter embeddings with pgvector alongside
+  lexical retrieval; model grounding and retrieval evaluation remain.
 
 ## Priority 1 — Get the local setup reliable — COMPLETE
 
@@ -88,12 +89,16 @@ data handling.
   category; verify category mapping, metadata quality, extracted text,
   department visibility, downloads, and replacement history before importing
   the full library.
-- [ ] Evaluate lexical search with representative questions from each
-  department; record expected source sections and acceptable results.
-- [ ] Improve retrieval based on evaluation results. Consider embeddings/vector
-  search only if lexical search is insufficient; select an embedding model and
-  provider before introducing that workflow. PostgreSQL support alone does not
-  enable pgvector retrieval.
+- [x] Implement opt-in OpenRouter embeddings and pgvector-assisted retrieval
+  for approved uploaded SOP sections, with lexical fallback and an admin reindex
+  endpoint.
+- [ ] Configure the OpenRouter embedding provider and API key in the intended
+  deployment, then run the admin-only embedding reindex endpoint.
+- [ ] Evaluate hybrid retrieval with representative questions from each
+  department; record expected source sections and compare lexical-only and
+  vector-assisted results.
+- [ ] Reindex after approving uploaded documents or changing the embedding
+  model; evaluate future automation for Git-managed SOPs separately.
 - [ ] Test real Markdown, text-based PDF, and DOCX uploads, metadata validation,
   duplicate versions, approval, archive/rejection, and effective-date behavior.
 - [ ] Review bulk-import edge cases and invitation failure/retry behavior with

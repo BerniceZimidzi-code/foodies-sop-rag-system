@@ -24,7 +24,14 @@ from backend.answering import (
     configured_answer_provider,
 )
 from backend.auth import hash_password, verify_password
+from backend.embeddings import (
+    EMBEDDING_DIMENSIONS,
+    EmbeddingProviderError,
+    OpenRouterEmbeddingProvider,
+    configured_embedding_provider,
+)
 from backend.mailer import EmailDeliveryError
+from backend.sops import reindex_approved_sop_embeddings, retrieve_sops
 from app import app, bootstrap_initial_admin
 
 
@@ -248,6 +255,92 @@ class FoodiesSystemTests(unittest.TestCase):
         self.assertNotIn("Draft", result["answer"])
         self.assertNotIn("Future", result["answer"])
 
+    def test_vector_search_receives_the_authorized_department_and_merges_results(self):
+        provider = Mock()
+        provider.model = "nvidia/nemotron-3.5-embed-1b:free"
+        provider.embed_texts.return_value = [[0.25] * EMBEDDING_DIMENSIONS]
+        semantic_match = {
+            "section_id": "section-vector-1",
+            "sop_id": "SOP-KIT-SEMANTIC",
+            "title": "Closing Sanitation",
+            "department": "Kitchen",
+            "owner": "Kitchen Manager",
+            "version": "1.0",
+            "status": "approved",
+            "effective_date": "2024-01-01",
+            "approved_by": "Admin",
+            "approved_date": "2024-01-01",
+            "source_path": "data/uploads/closing.md",
+            "section_heading": "Sanitation",
+            "section_text": "Sanitize prep surfaces before closing.",
+            "score": 0.82,
+        }
+        with (
+            patch("backend.sops.database.DATABASE_URL", "postgresql://test"),
+            patch("backend.sops.configured_embedding_provider", return_value=provider),
+            patch("backend.sops.list_approved_sop_sections", return_value=[]),
+            patch("backend.sops.database.search_sop_embeddings", return_value=[semantic_match]) as search,
+        ):
+            results = retrieve_sops("What cleaning happens at end of shift?", "Kitchen")
+
+        search.assert_called_once()
+        self.assertEqual(search.call_args.kwargs["department"], "Kitchen")
+        self.assertEqual(results[0]["sop_id"], "SOP-KIT-SEMANTIC")
+        self.assertNotIn("section_id", results[0])
+
+    def test_postgres_vector_query_filters_department_approval_and_similarity(self):
+        connection = Mock()
+        connection.execute.return_value.fetchall.return_value = []
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+        connection_context.__exit__.return_value = False
+
+        with (
+            patch("backend.database.DATABASE_URL", "postgresql://test"),
+            patch("backend.database.connect", return_value=connection_context),
+        ):
+            database.search_sop_embeddings(
+                embedding="[0.1,0.2]",
+                model="test-model",
+                department="Kitchen",
+                limit=5,
+                minimum_similarity=0.45,
+            )
+            database.delete_stale_sop_embeddings("test-model")
+
+        search_sql, search_parameters = connection.execute.call_args_list[0].args
+        self.assertIn("e.embedding <=> ?::vector", search_sql)
+        self.assertIn("s.status = 'approved'", search_sql)
+        self.assertIn("s.effective_date <= ?", search_sql)
+        self.assertIn("LOWER(s.department) = LOWER(?)", search_sql)
+        self.assertIn(">= ?", search_sql)
+        self.assertEqual(search_parameters[3:5], ("Kitchen", "Kitchen"))
+        self.assertEqual(search_parameters[6], 0.45)
+        cleanup_sql = connection.execute.call_args_list[1].args[0]
+        self.assertIn("s.status = 'approved'", cleanup_sql)
+        self.assertIn("e.content_sha256 = s.content_sha256", cleanup_sql)
+
+    def test_admin_embedding_reindex_endpoint_is_admin_only(self):
+        with patch(
+            "app.reindex_approved_sop_embeddings",
+            return_value={"indexed_sections": 3, "model": "test-model", "dimensions": 2048},
+        ) as reindex:
+            denied = self.client.post(
+                "/api/admin/embeddings/reindex",
+                headers=self._authorization(self.staff_token),
+            )
+            self.assertEqual(denied.status_code, 403)
+            reindex.assert_not_called()
+
+            response = self.client.post(
+                "/api/admin/embeddings/reindex",
+                headers=self._authorization(self.admin_token),
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["indexed_sections"], 3)
+        reindex.assert_called_once_with()
+
     def test_sop_library_lists_only_the_users_department(self):
         response = self.client.get(
             "/api/sops",
@@ -413,6 +506,126 @@ class FoodiesSystemTests(unittest.TestCase):
     def test_openrouter_provider_requires_api_key(self):
         with self.assertRaisesRegex(AnswerProviderError, "OPENROUTER_API_KEY"):
             OpenRouterAnswerProvider(api_key="")
+
+    def test_openrouter_embedding_provider_orders_and_validates_vectors(self):
+        client = Mock()
+        client.embeddings.create.return_value.data = [
+            Mock(index=1, embedding=[0.5] * EMBEDDING_DIMENSIONS),
+            Mock(index=0, embedding=[-0.25] * EMBEDDING_DIMENSIONS),
+        ]
+        provider = OpenRouterEmbeddingProvider(
+            api_key="test-api-key",
+            client=client,
+        )
+
+        vectors = provider.embed_texts(["first SOP section", "second SOP section"])
+
+        self.assertEqual(len(vectors), 2)
+        self.assertEqual(vectors[0][0], -0.25)
+        self.assertEqual(vectors[1][0], 0.5)
+        client.embeddings.create.assert_called_once_with(
+            model="nvidia/nemotron-3.5-embed-1b:free",
+            input=["first SOP section", "second SOP section"],
+        )
+
+    def test_openrouter_embedding_provider_rejects_wrong_dimensions(self):
+        client = Mock()
+        client.embeddings.create.return_value.data = [Mock(index=0, embedding=[0.5])]
+        provider = OpenRouterEmbeddingProvider(api_key="test-api-key", client=client)
+
+        with self.assertRaisesRegex(EmbeddingProviderError, "vector size"):
+            provider.embed_texts(["one section"])
+
+    def test_openrouter_embedding_provider_rejects_non_finite_values(self):
+        client = Mock()
+        client.embeddings.create.return_value.data = [
+            Mock(index=0, embedding=[float("nan")] + [0.5] * (EMBEDDING_DIMENSIONS - 1))
+        ]
+        provider = OpenRouterEmbeddingProvider(api_key="test-api-key", client=client)
+
+        with self.assertRaisesRegex(EmbeddingProviderError, "invalid vector values"):
+            provider.embed_texts(["one section"])
+
+    def test_embedding_provider_is_opt_in_and_configurable(self):
+        with patch.dict(os.environ, {"FOODIES_EMBEDDING_PROVIDER": "none"}):
+            self.assertIsNone(configured_embedding_provider())
+
+        with patch.dict(
+            os.environ,
+            {
+                "FOODIES_EMBEDDING_PROVIDER": "openrouter",
+                "OPENROUTER_API_KEY": "test-api-key",
+                "FOODIES_OPENROUTER_EMBEDDING_MODEL": "test-embedding-model",
+            },
+        ), patch("backend.embeddings.OpenAI") as openai_client:
+            provider = configured_embedding_provider()
+
+        self.assertIsInstance(provider, OpenRouterEmbeddingProvider)
+        self.assertEqual(provider.model, "test-embedding-model")
+        openai_client.assert_called_once_with(
+            api_key="test-api-key",
+            base_url="https://openrouter.ai/api/v1",
+            timeout=30.0,
+            max_retries=1,
+        )
+
+    def test_embedding_provider_uses_separate_key_when_configured(self):
+        with patch.dict(
+            os.environ,
+            {
+                "FOODIES_EMBEDDING_PROVIDER": "openrouter",
+                "OPENROUTER_API_KEY": "answer-key",
+                "FOODIES_OPENROUTER_EMBEDDING_API_KEY": "embedding-key",
+            },
+        ), patch("backend.embeddings.OpenAI") as openai_client:
+            configured_embedding_provider()
+
+        self.assertEqual(openai_client.call_args.kwargs["api_key"], "embedding-key")
+
+    def test_embedding_provider_falls_back_to_answer_key(self):
+        with patch.dict(
+            os.environ,
+            {
+                "FOODIES_EMBEDDING_PROVIDER": "openrouter",
+                "OPENROUTER_API_KEY": "shared-key",
+            },
+        ), patch.dict(os.environ, {"FOODIES_OPENROUTER_EMBEDDING_API_KEY": ""}), patch(
+            "backend.embeddings.OpenAI"
+        ) as openai_client:
+            configured_embedding_provider()
+
+        self.assertEqual(openai_client.call_args.kwargs["api_key"], "shared-key")
+
+    def test_reindex_embeddings_indexes_only_approved_database_sections(self):
+        document = {
+            "section_id": "section-1",
+            "content_sha256": "content-hash",
+            "title": "Closing Sanitation",
+            "department": "Kitchen",
+            "section_heading": "Sanitation",
+            "section_text": "Sanitize prep surfaces before closing.",
+        }
+        provider = Mock()
+        provider.model = "nvidia/nemotron-3.5-embed-1b:free"
+        provider.embed_texts.return_value = [[0.125] * EMBEDDING_DIMENSIONS]
+        with (
+            patch("backend.sops.database.DATABASE_URL", "postgresql://test"),
+            patch("backend.sops.configured_embedding_provider", return_value=provider),
+            patch(
+                "backend.sops.database.list_approved_sop_embedding_sections",
+                return_value=[document],
+            ),
+            patch("backend.sops.database.save_sop_embeddings") as save,
+            patch("backend.sops.database.delete_stale_sop_embeddings") as prune,
+        ):
+            result = reindex_approved_sop_embeddings()
+
+        self.assertEqual(result["indexed_sections"], 1)
+        self.assertEqual(result["dimensions"], EMBEDDING_DIMENSIONS)
+        saved_records = save.call_args.args[0]
+        self.assertEqual(saved_records[0][:2], ("section-1", "content-hash"))
+        self.assertTrue(saved_records[0][2].startswith("[0.125,"))
+        prune.assert_called_once_with(provider.model)
 
     def test_openrouter_provider_can_be_selected_from_configuration(self):
         with patch.dict(

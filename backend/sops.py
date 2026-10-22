@@ -5,9 +5,17 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import yaml
 
+from backend import database
 from backend.database import list_approved_sop_sections
+from backend.embeddings import (
+    EMBEDDING_DIMENSIONS,
+    EmbeddingProviderError,
+    MINIMUM_COSINE_SIMILARITY,
+    configured_embedding_provider,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -186,6 +194,18 @@ def retrieve_sops(
     department: str | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
+    lexical_results = _retrieve_sops_lexical(question, department, limit)
+    vector_results = _retrieve_sops_vector(question, department, limit)
+    if not vector_results:
+        return lexical_results
+    return _merge_retrieval_results(lexical_results, vector_results, limit)
+
+
+def _retrieve_sops_lexical(
+    question: str,
+    department: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
     query_terms = list(dict.fromkeys(tokenize(question)))
     if not query_terms:
         return []
@@ -252,3 +272,110 @@ def retrieve_sops(
     )
     return scored[:limit]
 
+
+def _retrieve_sops_vector(
+    question: str,
+    department: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not database.DATABASE_URL:
+        return []
+    try:
+        provider = configured_embedding_provider()
+        if provider is None:
+            return []
+        query_vectors = provider.embed_texts([question[:2000]])
+        if not query_vectors:
+            raise EmbeddingProviderError(
+                "The embedding service returned an incomplete response."
+            )
+        query_vector = query_vectors[0]
+        vector_literal = "[" + ",".join(format(value, ".9g") for value in query_vector) + "]"
+        return database.search_sop_embeddings(
+            embedding=vector_literal,
+            model=provider.model,
+            department=department,
+            limit=limit,
+            minimum_similarity=MINIMUM_COSINE_SIMILARITY,
+        )
+    except (EmbeddingProviderError, psycopg.Error) as exc:
+        LOGGER.warning(
+            "Vector retrieval unavailable; using lexical results: error_type=%s",
+            type(exc).__name__,
+        )
+        return []
+
+
+def _merge_retrieval_results(
+    lexical_results: list[dict[str, Any]],
+    vector_results: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, ...], dict[str, Any]] = {}
+    for results in (vector_results, lexical_results):
+        for rank, document in enumerate(results, start=1):
+            key = (
+                str(document.get("source_path", "")),
+                str(document["sop_id"]),
+                str(document["version"]),
+                str(document["section_heading"]),
+                str(document["section_text"]),
+            )
+            candidate = merged.setdefault(key, dict(document))
+            candidate["score"] = candidate.get("score", 0.0) + 1 / (60 + rank)
+    ranked = sorted(
+        merged.values(),
+        key=lambda item: (
+            -item["score"],
+            item.get("source_path", ""),
+            item.get("section_heading", ""),
+        ),
+    )
+    for document in ranked:
+        document.pop("section_id", None)
+    return ranked[:limit]
+
+
+def reindex_approved_sop_embeddings() -> dict[str, Any]:
+    if not database.DATABASE_URL:
+        raise ValueError("Set FOODIES_DATABASE_URL to PostgreSQL before indexing embeddings.")
+    provider = configured_embedding_provider()
+    if provider is None:
+        raise EmbeddingProviderError(
+            "Set FOODIES_EMBEDDING_PROVIDER=openrouter before indexing embeddings."
+        )
+
+    documents = database.list_approved_sop_embedding_sections()
+    indexed_count = 0
+    batch_size = 16
+    for start in range(0, len(documents), batch_size):
+        batch = documents[start : start + batch_size]
+        texts = [
+            (
+                f"Section: {document['section_heading']}\n"
+                f"{document['section_text']}"
+            )
+            for document in batch
+        ]
+        vectors = provider.embed_texts(texts)
+        if any(len(vector) != EMBEDDING_DIMENSIONS for vector in vectors):
+            raise EmbeddingProviderError(
+                "The embedding service returned an unexpected vector size."
+            )
+        records = [
+            (
+                document["section_id"],
+                document["content_sha256"],
+                "[" + ",".join(format(value, ".9g") for value in vector) + "]",
+            )
+            for document, vector in zip(batch, vectors)
+        ]
+        database.save_sop_embeddings(records, provider.model)
+        indexed_count += len(records)
+
+    database.delete_stale_sop_embeddings(provider.model)
+    return {
+        "indexed_sections": indexed_count,
+        "model": provider.model,
+        "dimensions": EMBEDDING_DIMENSIONS,
+    }

@@ -15,6 +15,7 @@ from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Re
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+import psycopg
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from backend import ingestion
@@ -31,6 +32,7 @@ from backend.auth import (
     verify_password,
 )
 from backend.answering import AnswerProviderError, answer_question, configured_answer_provider
+from backend.embeddings import EmbeddingProviderError
 from backend.database import (
     activate_user,
     create_sop_version,
@@ -96,7 +98,12 @@ from backend.mailer import (
     send_activation_email,
     send_password_reset_email,
 )
-from backend.sops import get_departments, load_sops, retrieve_sops
+from backend.sops import (
+    get_departments,
+    load_sops,
+    reindex_approved_sop_embeddings,
+    retrieve_sops,
+)
 from backend import sops as sop_repository
 from backend.user_import import UserImportError, parse_user_workbook
 
@@ -2353,6 +2360,33 @@ def admin_review_sop(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SOP version not found.")
     updated.pop("location", None)
     return {"sop": updated, "events": list_sop_events(version_id)}
+
+
+@app.post("/api/admin/embeddings/reindex")
+def admin_reindex_embeddings(user: dict = Depends(get_current_user)):
+    require_admin(user)
+    try:
+        return reindex_approved_sop_embeddings()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except EmbeddingProviderError as exc:
+        LOGGER.warning("SOP embedding reindex failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except psycopg.Error as exc:
+        LOGGER.exception("PostgreSQL SOP embedding reindex failed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "PostgreSQL vector indexing is unavailable. Confirm pgvector is "
+                "enabled and retry."
+            ),
+        ) from exc
 
 
 @app.get("/api/admin/sops/{version_id}/events")

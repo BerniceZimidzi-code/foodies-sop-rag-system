@@ -246,6 +246,20 @@ def initialize_database() -> None:
                 ON sop_events (sop_version_id, created_at DESC);
             """
         )
+        if DATABASE_URL:
+            connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sop_embeddings (
+                    section_id TEXT PRIMARY KEY
+                        REFERENCES sop_sections(id) ON DELETE CASCADE,
+                    model TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    embedding vector NOT NULL,
+                    indexed_at TEXT NOT NULL
+                )
+                """
+            )
         user_columns = _table_columns(connection, "users")
         if "must_change_password" not in user_columns:
             connection.execute(
@@ -1628,6 +1642,137 @@ def list_approved_sop_sections() -> list[dict[str, Any]]:
         document = dict(row)
         document["source_path"] = str(
             Path(document.pop("storage_path")).relative_to(APP_ROOT)
+        )
+        documents.append(document)
+    return documents
+
+
+def list_approved_sop_embedding_sections() -> list[dict[str, Any]]:
+    today = datetime.now(timezone.utc).date().isoformat()
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT x.id AS section_id, s.id AS sop_version_id,
+                   s.sop_id, s.title, s.department, s.owner, s.version, s.status,
+                   s.effective_date, s.approved_by, s.approved_date,
+                   s.storage_path, s.content_sha256,
+                   x.heading AS section_heading, x.content AS section_text
+            FROM sops s
+            JOIN sop_sections x ON x.sop_version_id = s.id
+            WHERE s.status = 'approved' AND s.effective_date <= ?
+                AND s.deleted_at IS NULL AND s.permanently_deleted = 0
+            ORDER BY s.sop_id, s.effective_date DESC, s.version DESC, x.chunk_index
+            """,
+            (today,),
+        ).fetchall()
+    documents = []
+    for row in rows:
+        document = dict(row)
+        document["source_path"] = str(
+            Path(document.pop("storage_path")).relative_to(APP_ROOT)
+        )
+        documents.append(document)
+    return documents
+
+
+def save_sop_embeddings(
+    records: list[tuple[str, str, str]],
+    model: str,
+) -> None:
+    if not DATABASE_URL:
+        raise RuntimeError("SOP embeddings require a PostgreSQL database.")
+    if not records:
+        return
+    now = _now()
+    with connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO sop_embeddings
+                (section_id, model, content_sha256, embedding, indexed_at)
+            VALUES (?, ?, ?, ?::vector, ?)
+            ON CONFLICT (section_id) DO UPDATE SET
+                model = EXCLUDED.model,
+                content_sha256 = EXCLUDED.content_sha256,
+                embedding = EXCLUDED.embedding,
+                indexed_at = EXCLUDED.indexed_at
+            """,
+            [
+                (section_id, model, content_sha256, embedding, now)
+                for section_id, content_sha256, embedding in records
+            ],
+        )
+
+
+def delete_stale_sop_embeddings(model: str) -> None:
+    if not DATABASE_URL:
+        raise RuntimeError("SOP embeddings require a PostgreSQL database.")
+    today = datetime.now(timezone.utc).date().isoformat()
+    with connect() as connection:
+        connection.execute(
+            """
+            DELETE FROM sop_embeddings AS e
+            WHERE e.model <> ? OR NOT EXISTS (
+                SELECT 1
+                FROM sop_sections x
+                JOIN sops s ON s.id = x.sop_version_id
+                WHERE x.id = e.section_id
+                    AND e.content_sha256 = s.content_sha256
+                    AND s.status = 'approved'
+                    AND s.effective_date <= ?
+                    AND s.deleted_at IS NULL
+                    AND s.permanently_deleted = 0
+            )
+            """,
+            (model, today),
+        )
+
+
+def search_sop_embeddings(
+    embedding: str,
+    model: str,
+    department: str | None,
+    limit: int,
+    minimum_similarity: float,
+) -> list[dict[str, Any]]:
+    if not DATABASE_URL:
+        return []
+    today = datetime.now(timezone.utc).date().isoformat()
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT x.id AS section_id, s.sop_id, s.title, s.department, s.owner,
+                   s.version, s.status, s.effective_date, s.approved_by,
+                   s.approved_date, s.storage_path AS source_path,
+                   x.heading AS section_heading, x.content AS section_text,
+                   1 - (e.embedding <=> ?::vector) AS score
+            FROM sop_embeddings e
+            JOIN sop_sections x ON x.id = e.section_id
+            JOIN sops s ON s.id = x.sop_version_id
+            WHERE e.model = ? AND e.content_sha256 = s.content_sha256
+                AND s.status = 'approved' AND s.effective_date <= ?
+                AND s.deleted_at IS NULL AND s.permanently_deleted = 0
+                AND (? IS NULL OR LOWER(s.department) = LOWER(?))
+                AND 1 - (e.embedding <=> ?::vector) >= ?
+            ORDER BY e.embedding <=> ?::vector
+            LIMIT ?
+            """,
+            (
+                embedding,
+                model,
+                today,
+                department,
+                department,
+                embedding,
+                minimum_similarity,
+                embedding,
+                limit,
+            ),
+        ).fetchall()
+    documents = []
+    for row in rows:
+        document = dict(row)
+        document["source_path"] = str(
+            Path(document["source_path"]).relative_to(APP_ROOT)
         )
         documents.append(document)
     return documents
